@@ -6,7 +6,7 @@ using UnityEngine;
 // 2) the disturbance is initially invisible
 // 3) suspended sediment develops over tens of seconds
 // 4) returning through that same area later produces a strong silt-out
-// 5) the guideline remains colour-readable through the haze
+// 5) the guideline keeps its colour only where the diver's light actually reaches it
 [DefaultExecutionOrder(-500)]
 public sealed class CaveDiveHazardsRuntime : MonoBehaviour
 {
@@ -32,6 +32,10 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
     private Vector2 warningWorldPosition;
     private Vector3 previousDiverPosition;
 
+    private const float FlashlightRange = 9.0f;
+    private const float FlashlightHalfAngle = 29f;
+    private const float FlashlightSourceOffset = 0.55f;
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
     {
@@ -56,7 +60,6 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
             Vector2.Distance(current, MvpMissionRuntime.StartPosition) < 1.4f &&
             motor != null && motor.enabled)
         {
-            // Fresh run after R restart.
             disturbances.Clear();
             exposure = 0f;
         }
@@ -98,8 +101,6 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
         if (diver == null || motor == null || !motor.enabled)
             return;
 
-        // Sliding along one wall should build one growing disturbance rather than
-        // creating hundreds of overlapping clouds every physics frame.
         if (contactCooldown > 0f)
             return;
 
@@ -159,14 +160,13 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
             if (maturity <= 0f)
                 continue;
 
-            // Sediment slowly spreads out from the exact place the diver touched.
             float radius = Mathf.Lerp(0.65f, 3.75f, maturity);
             float distance = Vector2.Distance(diverPosition, disturbance.Position);
             if (distance >= radius)
                 continue;
 
             float spatial = 1f - distance / radius;
-            spatial = spatial * spatial * (3f - 2f * spatial); // smoothstep
+            spatial = spatial * spatial * (3f - 2f * spatial);
 
             float lateFade = age <= 140f ? 1f : Mathf.Clamp01((180f - age) / 40f);
             total += spatial * maturity * disturbance.Strength * lateFade;
@@ -177,8 +177,6 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
 
     private static float SiltMaturity(float age)
     {
-        // Nothing obvious at first: the mistake is made on the inward trip,
-        // while the consequence is waiting for the player on the return trip.
         if (age < 5f)
             return 0f;
         if (age < 15f)
@@ -201,8 +199,6 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
         if (exposure <= 0.015f)
             return;
 
-        // IMGUI is deliberately used only for the murky optical layer. It sits over
-        // the 2D lighting, so even a working flashlight becomes hazy in mature silt.
         GUI.depth = 12;
 
         Color previousColor = GUI.color;
@@ -227,8 +223,6 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
             GUI.DrawTexture(new Rect(x, y, size, size), Texture2D.whiteTexture);
         }
 
-        // In a silt-out, the cave disappears first. The guideline remains the one
-        // colour reference the diver can still identify through suspended sediment.
         DrawGuidelineThroughSilt(normalized);
 
         GUI.matrix = previousMatrix;
@@ -248,32 +242,91 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
         guidelineRenderer.GetPositions(positions);
 
         Color oldColor = GUI.color;
-        float alpha = Mathf.Lerp(0.25f, 0.88f, normalized);
+        float alpha = Mathf.Lerp(0.22f, 0.84f, normalized);
         GUI.color = new Color(0.76f, 0.66f, 0.28f, alpha);
 
-        Vector2 diverPosition = diver.transform.position;
+        // The silt readability pass is not an x-ray. Sample every line span and redraw
+        // only the pieces that lie inside the current flashlight cone and are not hidden
+        // behind solid cave geometry. Turning away from the guideline makes it disappear.
         for (int i = 0; i < count - 1; i++)
         {
             Vector3 aWorld = positions[i];
             Vector3 bWorld = positions[i + 1];
-            Vector2 midpoint = ((Vector2)aWorld + (Vector2)bWorld) * 0.5f;
+            float length = Vector3.Distance(aWorld, bWorld);
+            int subdivisions = Mathf.Clamp(Mathf.CeilToInt(length / 0.35f), 2, 24);
 
-            // Do not turn the line into an x-ray map of the whole cave. Only the nearby
-            // part of the cord gets the special silt readability treatment.
-            if (Vector2.Distance(midpoint, diverPosition) > 6.8f)
-                continue;
+            Vector3 previous = aWorld;
+            bool previousVisible = IsInsideFlashlight(previous);
 
-            Vector3 aScreen3 = Camera.main.WorldToScreenPoint(aWorld);
-            Vector3 bScreen3 = Camera.main.WorldToScreenPoint(bWorld);
-            if (aScreen3.z <= 0f || bScreen3.z <= 0f)
-                continue;
+            for (int s = 1; s <= subdivisions; s++)
+            {
+                float u = s / (float)subdivisions;
+                Vector3 current = Vector3.Lerp(aWorld, bWorld, u);
+                bool currentVisible = IsInsideFlashlight(current);
 
-            Vector2 a = new Vector2(aScreen3.x, Screen.height - aScreen3.y);
-            Vector2 b = new Vector2(bScreen3.x, Screen.height - bScreen3.y);
-            DrawGuiLine(a, b, 1.6f);
+                if (previousVisible && currentVisible)
+                    DrawWorldGuiLine(previous, current, 1.55f);
+
+                previous = current;
+                previousVisible = currentVisible;
+            }
         }
 
         GUI.color = oldColor;
+    }
+
+    private bool IsInsideFlashlight(Vector2 worldPoint)
+    {
+        if (diver == null)
+            return false;
+
+        Vector2 forward = diver.transform.right.normalized;
+        Vector2 source = (Vector2)diver.transform.position + forward * FlashlightSourceOffset;
+        Vector2 toPoint = worldPoint - source;
+        float distance = toPoint.magnitude;
+
+        // The tiny source glow around the lamp itself is also real illumination.
+        if (distance <= 0.75f)
+            return HasLightLineOfSight(source, worldPoint);
+
+        if (distance > FlashlightRange || distance < 0.001f)
+            return false;
+
+        float angle = Vector2.Angle(forward, toPoint / distance);
+        if (angle > FlashlightHalfAngle)
+            return false;
+
+        return HasLightLineOfSight(source, worldPoint);
+    }
+
+    private bool HasLightLineOfSight(Vector2 source, Vector2 target)
+    {
+        RaycastHit2D[] hits = Physics2D.LinecastAll(source, target);
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider2D hit = hits[i].collider;
+            if (hit == null || hit == diverCollider || hit.isTrigger || !hit.enabled)
+                continue;
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void DrawWorldGuiLine(Vector3 aWorld, Vector3 bWorld, float thickness)
+    {
+        if (Camera.main == null)
+            return;
+
+        Vector3 aScreen3 = Camera.main.WorldToScreenPoint(aWorld);
+        Vector3 bScreen3 = Camera.main.WorldToScreenPoint(bWorld);
+        if (aScreen3.z <= 0f || bScreen3.z <= 0f)
+            return;
+
+        Vector2 a = new Vector2(aScreen3.x, Screen.height - aScreen3.y);
+        Vector2 b = new Vector2(bScreen3.x, Screen.height - bScreen3.y);
+        DrawGuiLine(a, b, thickness);
     }
 
     private static void DrawGuiLine(Vector2 a, Vector2 b, float thickness)
@@ -322,7 +375,6 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
     }
 }
 
-// Lives on the diver so Unity can deliver collision contacts from static cave geometry.
 internal sealed class DiverSiltContactSensor : MonoBehaviour
 {
     public CaveDiveHazardsRuntime Runtime { get; set; }
@@ -349,9 +401,6 @@ internal sealed class DiverSiltContactSensor : MonoBehaviour
     }
 }
 
-// Retained as a type because CaveLighting2DRuntime disables the old visibility
-// experiment if it finds one. The actual MVP visibility now comes entirely from
-// Universal 2D lights, so this class intentionally does nothing.
 public sealed class CaveVisibilityRuntime : MonoBehaviour
 {
 }
