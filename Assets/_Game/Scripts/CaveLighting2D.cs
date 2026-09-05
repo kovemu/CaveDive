@@ -18,7 +18,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         if (GameObject.Find("CaveLighting2DRuntime") != null)
             return;
 
-        var go = new GameObject("CaveLighting2DRuntime");
+        GameObject go = new GameObject("CaveLighting2DRuntime");
         go.AddComponent<CaveLighting2DRuntime>();
     }
 
@@ -52,8 +52,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
 
         diver = diverObject.transform;
 
-        // Retire the earlier IMGUI darkness experiment. It did not create a reliable
-        // visible beam on every Game view / resolution. Universal 2D lighting does.
         CaveVisibilityRuntime oldVisibility = Object.FindFirstObjectByType<CaveVisibilityRuntime>();
         if (oldVisibility != null)
             oldVisibility.enabled = false;
@@ -67,13 +65,12 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
     {
         Camera camera = Camera.main;
         if (camera != null)
-            camera.backgroundColor = new Color(0.004f, 0.010f, 0.014f, 1f);
+            camera.backgroundColor = Color.black;
 
         Shader litShader = Shader.Find("Universal Render Pipeline/2D/Sprite-Lit-Default");
         if (litShader != null)
             litMaterial = new Material(litShader) { name = "Runtime Cave Sprite Lit" };
 
-        // Make the runtime prototype sprites react to the actual URP 2D lights.
         GameObject prototypeRoot = GameObject.Find("CaveDivePrototype");
         if (prototypeRoot != null && litMaterial != null)
         {
@@ -82,18 +79,18 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
                 renderers[i].sharedMaterial = litMaterial;
         }
 
-        // The camera background cannot receive a 2D light, so add a large lit water plane
-        // behind the cave. This is what makes the flashlight cone visible in open water.
         BuildWaterPlane();
 
+        // MVP rule: there is no readable cave silhouette outside the diver's lights.
+        // Any global light would reveal the map shape, so turn it fully off.
         Light2D[] sceneLights = Object.FindObjectsByType<Light2D>(FindObjectsSortMode.None);
         for (int i = 0; i < sceneLights.Length; i++)
         {
             Light2D light = sceneLights[i];
             if (light != null && light.lightType == Light2D.LightType.Global)
             {
-                light.intensity = 0.075f;
-                light.color = new Color(0.23f, 0.42f, 0.50f, 1f);
+                light.intensity = 0f;
+                light.color = Color.black;
             }
         }
     }
@@ -112,12 +109,12 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         sprite.name = "RuntimeWaterSprite";
 
         GameObject water = new GameObject("RuntimeWaterPlane");
-        water.transform.position = new Vector3(4f, 0f, 0.5f);
-        water.transform.localScale = new Vector3(62f, 20f, 1f);
+        water.transform.position = new Vector3(0f, 0f, 0.5f);
+        water.transform.localScale = new Vector3(32f, 32f, 1f);
 
         SpriteRenderer renderer = water.AddComponent<SpriteRenderer>();
         renderer.sprite = sprite;
-        renderer.color = new Color(0.055f, 0.22f, 0.30f, 1f);
+        renderer.color = new Color(0.045f, 0.18f, 0.25f, 1f);
         renderer.sortingOrder = -50;
         if (litMaterial != null)
             renderer.sharedMaterial = litMaterial;
@@ -129,7 +126,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         beamObject.transform.SetParent(diver, false);
         beamObject.transform.localPosition = new Vector3(0.55f, 0f, -0.2f);
 
-        // A 2D Point light with a restricted angle is the URP 2D 'Spot' light.
         flashlight = beamObject.AddComponent<Light2D>();
         flashlight.lightType = Light2D.LightType.Point;
         flashlight.color = new Color(0.70f, 0.90f, 0.94f, 1f);
@@ -141,22 +137,24 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         flashlight.falloffIntensity = 0.55f;
         flashlight.overlapOperation = Light2D.OverlapOperation.Additive;
 
-        // Light2D's wedge is centred on local +Y. The diver artwork faces local +X.
+        // Light2D's wedge is centred on local +Y; the diver faces local +X.
         beamObject.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
 
+        // Only enough local light to keep the diver body readable. It must not reveal
+        // surrounding cave geometry outside the flashlight beam.
         GameObject haloObject = new GameObject("Diver Local Halo 2D");
         haloObject.transform.SetParent(diver, false);
         haloObject.transform.localPosition = Vector3.zero;
 
         halo = haloObject.AddComponent<Light2D>();
         halo.lightType = Light2D.LightType.Point;
-        halo.color = new Color(0.48f, 0.72f, 0.78f, 1f);
-        halo.intensity = 0.32f;
-        halo.pointLightInnerRadius = 0.15f;
-        halo.pointLightOuterRadius = 1.65f;
+        halo.color = new Color(0.42f, 0.62f, 0.68f, 1f);
+        halo.intensity = 0.12f;
+        halo.pointLightInnerRadius = 0.08f;
+        halo.pointLightOuterRadius = 0.82f;
         halo.pointLightInnerAngle = 360f;
         halo.pointLightOuterAngle = 360f;
-        halo.falloffIntensity = 0.75f;
+        halo.falloffIntensity = 0.90f;
         halo.overlapOperation = Light2D.OverlapOperation.Additive;
     }
 }
