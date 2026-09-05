@@ -11,6 +11,11 @@ public sealed class MvpMapRuntime : MonoBehaviour
     public const int CollisionColumns = 96;
     public const int CollisionRows = 96;
 
+    // Collision is intentionally a little more forgiving than the visual silhouette.
+    // One grid cell is roughly 0.25 world units, so eroding one cell opens a narrow
+    // passage by about 0.5 units total without visibly changing the map art.
+    private const int CollisionErosionCells = 1;
+
     private static Texture2D mapMask;
     private static GameObject mapRoot;
 
@@ -32,6 +37,7 @@ public sealed class MvpMapRuntime : MonoBehaviour
 
         DisablePrototypeGeometry();
         BuildMap();
+        ConfigureDiverCollision();
     }
 
     private static void DisablePrototypeGeometry()
@@ -71,6 +77,22 @@ public sealed class MvpMapRuntime : MonoBehaviour
         BuildRockVisual(mapRoot.transform);
         BuildCollisionGrid(mapRoot.transform);
         BuildOuterBoundary(mapRoot.transform);
+    }
+
+    private static void ConfigureDiverCollision()
+    {
+        GameObject diver = GameObject.Find("Diver");
+        if (diver == null)
+            return;
+
+        CapsuleCollider2D capsule = diver.GetComponent<CapsuleCollider2D>();
+        if (capsule == null)
+            return;
+
+        // The visible fins/tank should not make every tight cave opening impossible.
+        // Keep the hitbox around the diver's actual torso rather than the full silhouette.
+        capsule.size = new Vector2(0.92f, 0.34f);
+        capsule.offset = Vector2.zero;
     }
 
     private static void BuildRockVisual(Transform parent)
@@ -133,7 +155,33 @@ public sealed class MvpMapRuntime : MonoBehaviour
 
     private static bool CellIsRock(int col, int row)
     {
-        // Multiple samples keep thin rock lips from becoming accidental holes in the collider grid.
+        if (!RawCellIsRock(col, row))
+            return false;
+
+        // Erode the collision boundary inward by one grid cell. Any rock cell that is
+        // adjacent to navigable water is omitted from collision, widening cramped necks
+        // while leaving the rendered cave image exactly as the user drew it.
+        for (int dy = -CollisionErosionCells; dy <= CollisionErosionCells; dy++)
+        {
+            for (int dx = -CollisionErosionCells; dx <= CollisionErosionCells; dx++)
+            {
+                if (dx == 0 && dy == 0)
+                    continue;
+
+                if (!RawCellIsRock(col + dx, row + dy))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool RawCellIsRock(int col, int row)
+    {
+        // Outside the sampled map stays solid; the explicit outer boundary handles escape too.
+        if (col < 0 || row < 0 || col >= CollisionColumns || row >= CollisionRows)
+            return true;
+
         float u0 = (col + 0.25f) / CollisionColumns;
         float u1 = (col + 0.75f) / CollisionColumns;
         float v0 = (row + 0.25f) / CollisionRows;
@@ -162,7 +210,7 @@ public sealed class MvpMapRuntime : MonoBehaviour
 
         BoxCollider2D collider = root.AddComponent<BoxCollider2D>();
         collider.offset = new Vector2(centerX, centerY);
-        collider.size = new Vector2(count * cellWidth + 0.015f, cellHeight + 0.015f);
+        collider.size = new Vector2(count * cellWidth + 0.01f, cellHeight + 0.01f);
     }
 
     private static void BuildOuterBoundary(Transform parent)
