@@ -8,6 +8,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
     private Light2D flashlight;
     private Light2D halo;
     private Material litMaterial;
+    private Material diverUnlitMaterial;
     private float findRetryTimer;
     private float baseFlashlightIntensity = 1.35f;
     private bool configured;
@@ -57,6 +58,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
             oldVisibility.enabled = false;
 
         ConfigureWorldFor2DLighting();
+        ConfigureDiverReadability(diverObject);
         BuildFlashlight();
         configured = true;
     }
@@ -93,6 +95,28 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
                 light.color = Color.black;
             }
         }
+    }
+
+    private void ConfigureDiverReadability(GameObject diverObject)
+    {
+        // The cave should disappear in darkness, but losing the diver itself makes control
+        // needlessly confusing. Render only the diver artwork unlit so the player always knows
+        // their position/orientation without revealing any surrounding geometry.
+        Shader unlitShader = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+        if (unlitShader == null)
+            unlitShader = Shader.Find("Sprites/Default");
+
+        if (unlitShader == null)
+            return;
+
+        diverUnlitMaterial = new Material(unlitShader)
+        {
+            name = "Runtime Diver Readable Unlit"
+        };
+
+        SpriteRenderer[] diverRenderers = diverObject.GetComponentsInChildren<SpriteRenderer>(true);
+        for (int i = 0; i < diverRenderers.Length; i++)
+            diverRenderers[i].sharedMaterial = diverUnlitMaterial;
     }
 
     private void BuildWaterPlane()
@@ -140,8 +164,8 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         // Light2D's wedge is centred on local +Y; the diver faces local +X.
         beamObject.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
 
-        // Only enough local light to keep the diver body readable. It must not reveal
-        // surrounding cave geometry outside the flashlight beam.
+        // Keep only a tiny local glow. The diver itself is now readable via an unlit
+        // material, so this halo no longer needs to illuminate surrounding cave walls.
         GameObject haloObject = new GameObject("Diver Local Halo 2D");
         haloObject.transform.SetParent(diver, false);
         haloObject.transform.localPosition = Vector3.zero;
@@ -149,12 +173,12 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         halo = haloObject.AddComponent<Light2D>();
         halo.lightType = Light2D.LightType.Point;
         halo.color = new Color(0.42f, 0.62f, 0.68f, 1f);
-        halo.intensity = 0.12f;
-        halo.pointLightInnerRadius = 0.08f;
-        halo.pointLightOuterRadius = 0.82f;
+        halo.intensity = 0.05f;
+        halo.pointLightInnerRadius = 0.05f;
+        halo.pointLightOuterRadius = 0.55f;
         halo.pointLightInnerAngle = 360f;
         halo.pointLightOuterAngle = 360f;
-        halo.falloffIntensity = 0.90f;
+        halo.falloffIntensity = 0.95f;
         halo.overlapOperation = Light2D.OverlapOperation.Additive;
     }
 }
