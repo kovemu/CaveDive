@@ -2,7 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-// Replaces the prototype breadcrumb-looking guideline with a tauter reel line.
+// Replaces the prototype breadcrumb-looking guideline with a taut reel line.
 // The line pays out on the inward dive, removes unnecessary slack when there is
 // clear line-of-sight, and keeps only the points needed to wrap around cave bends.
 [DefaultExecutionOrder(500)]
@@ -16,7 +16,6 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
     private Collider2D diverCollider;
     private GuidelineTrail prototypeTrail;
     private LineRenderer line;
-    private Material cordMaterial;
 
     private bool frozen;
     private bool completedAtEntrance;
@@ -25,7 +24,7 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
     private const float SampleSpacing = 0.38f;
     private const float TargetRadius = 1.35f;
     private const float EntranceRadius = 1.0f;
-    private const float CordWidth = 0.027f;
+    private const float CordWidth = 0.022f;
 
     private static readonly Vector2 PrototypeTarget = new Vector2(20f, -1.8f);
     private static readonly Vector2 PrototypeEntrance = new Vector2(-11.5f, 0f);
@@ -114,74 +113,32 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         if (line == null)
             return;
 
+        // Keep this deliberately simple. A cave guideline should read as a thin cord,
+        // not as a textured ribbon or a glowing game trail.
+        line.widthMultiplier = 1f;
         line.startWidth = CordWidth;
-        line.endWidth = CordWidth * 0.92f;
-        line.numCornerVertices = 2;
-        line.numCapVertices = 2;
-        line.textureMode = LineTextureMode.Tile;
+        line.endWidth = CordWidth;
+        line.numCornerVertices = 1;
+        line.numCapVertices = 1;
+        line.textureMode = LineTextureMode.Stretch;
         line.sortingOrder = 3;
 
-        // Cave guideline is usually cord, not a glowing cable. Keep it desaturated,
-        // slightly dirty, and let the diver's lamp do most of the work.
-        Color cord = new Color(0.69f, 0.63f, 0.39f, 0.92f);
+        Color cord = new Color(0.63f, 0.59f, 0.40f, 0.82f);
         line.startColor = cord;
-        line.endColor = new Color(0.61f, 0.56f, 0.35f, 0.90f);
+        line.endColor = new Color(0.58f, 0.55f, 0.38f, 0.80f);
 
-        AnimationCurve width = new AnimationCurve();
-        width.AddKey(0f, 0.92f);
-        width.AddKey(0.22f, 1.04f);
-        width.AddKey(0.50f, 0.96f);
-        width.AddKey(0.78f, 1.02f);
-        width.AddKey(1f, 0.90f);
-        line.widthCurve = width;
-        line.widthMultiplier = CordWidth;
-        line.startWidth = 1f;
-        line.endWidth = 1f;
-
-        if (cordMaterial == null)
-            cordMaterial = BuildCordMaterial();
-        if (cordMaterial != null)
-            line.material = cordMaterial;
-    }
-
-    private static Material BuildCordMaterial()
-    {
         Shader shader = Shader.Find("Universal Render Pipeline/2D/Sprite-Lit-Default");
         if (shader == null)
             shader = Shader.Find("Sprites/Default");
-        if (shader == null)
-            return null;
 
-        Texture2D texture = new Texture2D(32, 4, TextureFormat.RGBA32, false)
+        if (shader != null)
         {
-            name = "RuntimeGuidelineCordTexture",
-            filterMode = FilterMode.Bilinear,
-            wrapMode = TextureWrapMode.Repeat
-        };
-
-        Color[] pixels = new Color[32 * 4];
-        for (int y = 0; y < 4; y++)
-        {
-            for (int x = 0; x < 32; x++)
+            Material material = new Material(shader)
             {
-                // Tiny alternating strands and stains break up the perfectly solid laser look.
-                float strand = ((x / 3) % 2 == 0) ? 1.00f : 0.78f;
-                float grime = 0.90f + Mathf.Sin(x * 1.73f + y * 0.91f) * 0.07f;
-                float edge = (y == 0 || y == 3) ? 0.72f : 1f;
-                float v = strand * grime * edge;
-                pixels[y * 32 + x] = new Color(0.78f * v, 0.72f * v, 0.45f * v, 1f);
-            }
+                name = "RuntimeGuidelineCordMaterial"
+            };
+            line.material = material;
         }
-
-        texture.SetPixels(pixels);
-        texture.Apply(false, true);
-
-        Material material = new Material(shader)
-        {
-            name = "RuntimeGuidelineCordMaterial",
-            mainTexture = texture
-        };
-        return material;
     }
 
     private void PayOutLine(Vector3 current)
@@ -247,13 +204,13 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         visualPoints.Clear();
 
         for (int i = 0; i < points.Count - 1; i++)
-            AppendCordSpan(points[i], points[i + 1], false, i);
+            AppendCordSpan(points[i], points[i + 1], false);
 
         if (!frozen)
         {
             Vector3 last = points[points.Count - 1];
             if (Vector3.Distance(last, current) > 0.02f)
-                AppendCordSpan(last, current, true, points.Count - 1);
+                AppendCordSpan(last, current, true);
             else if (visualPoints.Count == 0)
                 visualPoints.Add(last);
         }
@@ -267,17 +224,15 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
             line.SetPositions(visualPoints.ToArray());
     }
 
-    private void AppendCordSpan(Vector3 a, Vector3 b, bool liveEnd, int spanIndex)
+    private void AppendCordSpan(Vector3 a, Vector3 b, bool liveEnd)
     {
         float length = Vector3.Distance(a, b);
-        int subdivisions = Mathf.Clamp(Mathf.CeilToInt(length / 0.7f), 2, 14);
+        int subdivisions = Mathf.Clamp(Mathf.CeilToInt(length / 1.0f), 2, 12);
 
-        // A taut guideline still has a small amount of weight/slack in water. The live section
-        // held by the diver is tighter than older spans already laid through the cave.
-        float sag = Mathf.Min(liveEnd ? 0.025f : 0.065f, length * (liveEnd ? 0.006f : 0.012f));
-
-        Vector2 direction = ((Vector2)(b - a)).normalized;
-        Vector2 normal = new Vector2(-direction.y, direction.x);
+        // Only a tiny amount of slack. In water the guideline is not perfectly rigid,
+        // but it also should not hang like a heavy rope.
+        float sag = Mathf.Min(liveEnd ? 0.012f : 0.035f,
+            length * (liveEnd ? 0.0025f : 0.006f));
 
         for (int s = 0; s <= subdivisions; s++)
         {
@@ -286,13 +241,8 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
 
             float t = s / (float)subdivisions;
             Vector3 p = Vector3.Lerp(a, b, t);
-
             float arc = 4f * t * (1f - t);
             p.y -= sag * arc;
-
-            // Very small irregularity suggests braided cord without making the line visibly wavy.
-            float fiberWobble = Mathf.Sin((spanIndex * 2.37f + t * 7.1f) * Mathf.PI) * 0.006f * arc;
-            p += (Vector3)(normal * fiberWobble);
             p.z = 0f;
             visualPoints.Add(p);
         }
