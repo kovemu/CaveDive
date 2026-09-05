@@ -77,6 +77,8 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
 
         Vector2 position = diver.transform.position;
 
+        // The line is paid out only on the inward journey. Once the target is reached,
+        // it becomes a fixed reference that the diver must follow back out.
         if (!guidelineFrozen && Vector2.Distance(position, PrototypeTarget) < 1.35f)
         {
             guideline.enabled = false;
@@ -173,35 +175,40 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
         if (exposure <= 0.015f)
             return;
 
+        // The hazard veil must sit behind the HUD, which uses the default GUI depth (0).
+        GUI.depth = 12;
+
         Color previousColor = GUI.color;
         float normalized = Mathf.Clamp01(exposure);
 
-        float veilAlpha = Mathf.Lerp(0.05f, 0.94f, Mathf.SmoothStep(0f, 1f, normalized));
-        GUI.color = new Color(0.14f, 0.13f, 0.11f, veilAlpha);
+        // Flashlight darkness is handled separately. Silt should feel like suspended sediment,
+        // not like the entire monitor has simply faded to black.
+        float veilAlpha = Mathf.Lerp(0.03f, 0.72f, Mathf.SmoothStep(0f, 1f, normalized));
+        GUI.color = new Color(0.17f, 0.145f, 0.105f, veilAlpha);
         GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
 
-        int speckCount = Mathf.RoundToInt(Mathf.Lerp(8f, 54f, normalized));
+        int speckCount = Mathf.RoundToInt(Mathf.Lerp(10f, 78f, normalized));
         float t = Time.time;
-        GUI.color = new Color(0.62f, 0.59f, 0.49f, Mathf.Lerp(0.04f, 0.22f, normalized));
+        GUI.color = new Color(0.70f, 0.64f, 0.48f, Mathf.Lerp(0.05f, 0.30f, normalized));
 
         for (int i = 0; i < speckCount; i++)
         {
-            float seedA = Mathf.Sin(i * 12.9898f) * 43758.5453f;
-            float seedB = Mathf.Sin(i * 78.233f + 1.7f) * 19341.731f;
+            float seedA = Mathf.Abs(Mathf.Sin(i * 12.9898f) * 43758.5453f);
+            float seedB = Mathf.Abs(Mathf.Sin(i * 78.233f + 1.7f) * 19341.731f);
             float x = Mathf.Repeat(seedA + t * (7f + i % 5), Screen.width);
             float y = Mathf.Repeat(seedB + t * (3f + i % 3), Screen.height);
-            float size = 1.5f + (i % 4) * 0.8f;
+            float size = 1.5f + (i % 4) * 0.9f;
             GUI.DrawTexture(new Rect(x, y, size, size), Texture2D.whiteTexture);
         }
 
-        if (normalized > 0.72f)
+        if (normalized > 0.82f)
         {
             var warning = new GUIStyle(GUI.skin.label)
             {
                 alignment = TextAnchor.MiddleCenter,
-                fontSize = 18,
+                fontSize = 17,
                 fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(0.88f, 0.86f, 0.78f) }
+                normal = { textColor = new Color(0.88f, 0.86f, 0.78f, 0.85f) }
             };
 
             GUI.Label(new Rect(0f, Screen.height * 0.54f, Screen.width, 32f),
@@ -209,5 +216,111 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
         }
 
         GUI.color = previousColor;
+    }
+}
+
+[DefaultExecutionOrder(-450)]
+public sealed class CaveVisibilityRuntime : MonoBehaviour
+{
+    private Transform diver;
+    private Texture2D flashlightMask;
+    private float findRetryTimer;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+    private static void Install()
+    {
+        if (GameObject.Find("CaveVisibilityRuntime") != null)
+            return;
+
+        var runtime = new GameObject("CaveVisibilityRuntime");
+        runtime.AddComponent<CaveVisibilityRuntime>();
+    }
+
+    private void Awake()
+    {
+        flashlightMask = BuildFlashlightMask(256);
+    }
+
+    private void Update()
+    {
+        if (diver != null)
+            return;
+
+        findRetryTimer -= Time.deltaTime;
+        if (findRetryTimer > 0f)
+            return;
+
+        findRetryTimer = 0.25f;
+        GameObject diverObject = GameObject.Find("Diver");
+        if (diverObject != null)
+            diver = diverObject.transform;
+    }
+
+    private void OnGUI()
+    {
+        if (diver == null || flashlightMask == null || Camera.main == null)
+            return;
+
+        // Keep the world dark while leaving the prototype HUD legible on top.
+        GUI.depth = 20;
+
+        Vector3 screenPoint = Camera.main.WorldToScreenPoint(diver.position);
+        Vector2 pivot = new Vector2(screenPoint.x, Screen.height - screenPoint.y);
+
+        float size = Mathf.Max(Screen.width, Screen.height) * 2.35f;
+        Rect rect = new Rect(pivot.x - size * 0.5f, pivot.y - size * 0.5f, size, size);
+
+        Matrix4x4 previousMatrix = GUI.matrix;
+        Color previousColor = GUI.color;
+
+        // Unity world rotation is counter-clockwise with +Y up; IMGUI has +Y down.
+        GUIUtility.RotateAroundPivot(-diver.eulerAngles.z, pivot);
+
+        float flicker = 0.97f + Mathf.Sin(Time.time * 8.7f) * 0.015f + Mathf.Sin(Time.time * 3.1f) * 0.01f;
+        GUI.color = new Color(1f, 1f, 1f, flicker);
+        GUI.DrawTexture(rect, flashlightMask, ScaleMode.StretchToFill, true);
+
+        GUI.matrix = previousMatrix;
+        GUI.color = previousColor;
+    }
+
+    private static Texture2D BuildFlashlightMask(int size)
+    {
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        {
+            name = "RuntimeFlashlightMask",
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp
+        };
+
+        Color[] pixels = new Color[size * size];
+        float half = (size - 1) * 0.5f;
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = (x - half) / half;
+                float dy = (y - half) / half;
+                float distance = Mathf.Sqrt(dx * dx + dy * dy);
+
+                float angle = Mathf.Abs(Mathf.Atan2(dy, dx) * Mathf.Rad2Deg);
+                float cone = 1f - Mathf.SmoothStep(26f, 47f, angle);
+                float range = 1f - Mathf.SmoothStep(0.50f, 0.97f, distance);
+                float beam = Mathf.Clamp01(cone * range);
+
+                // A tiny amount of local visibility prevents the diver itself disappearing
+                // whenever the light is pointed into a wall.
+                float near = 1f - Mathf.SmoothStep(0.06f, 0.20f, distance);
+                float visibility = Mathf.Max(beam, near * 0.88f);
+
+                float alpha = Mathf.Lerp(0.88f, 0.055f, visibility);
+                pixels[y * size + x] = new Color(0.015f, 0.025f, 0.03f, alpha);
+            }
+        }
+
+        texture.SetPixels(pixels);
+        texture.Apply(false, true);
+        return texture;
     }
 }
