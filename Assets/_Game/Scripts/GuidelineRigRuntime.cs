@@ -2,9 +2,9 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-// Replaces the prototype breadcrumb-looking guideline with a taut reel line.
-// The line pays out on the inward dive, removes unnecessary slack when there is
-// clear line-of-sight, and keeps only the points needed to wrap around cave bends.
+// Pays out a thin cave-diving guideline on the inward journey, simplifies slack
+// when a direct path is clear, then freezes the installed line after either MVP
+// target has been reached so the diver can follow the same line back to S.
 [DefaultExecutionOrder(500)]
 public sealed class GuidelineRigRuntime : MonoBehaviour
 {
@@ -22,12 +22,8 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
     private Vector3 previousDiverPosition;
 
     private const float SampleSpacing = 0.38f;
-    private const float TargetRadius = 1.35f;
     private const float EntranceRadius = 1.0f;
     private const float CordWidth = 0.022f;
-
-    private static readonly Vector2 PrototypeTarget = new Vector2(20f, -1.8f);
-    private static readonly Vector2 PrototypeEntrance = new Vector2(-11.5f, 0f);
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
@@ -55,8 +51,9 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         Vector3 current = diver.position;
         current.z = 0f;
 
+        // Mission setup and R-restart both teleport the diver back to S.
         if (Vector3.Distance(current, previousDiverPosition) > 3f &&
-            Vector2.Distance(current, PrototypeEntrance) < EntranceRadius)
+            Vector2.Distance(current, MvpMissionRuntime.StartPosition) < EntranceRadius + 0.35f)
         {
             ResetPath();
         }
@@ -65,7 +62,9 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         {
             PayOutLine(current);
 
-            if (Vector2.Distance(current, PrototypeTarget) < TargetRadius)
+            // T1 and T2 are alternatives. The mission runtime raises one shared state
+            // when either target is touched; that is the moment the installed line freezes.
+            if (MvpMissionRuntime.TargetReached)
             {
                 CommitCurrentPoint(current);
                 SimplifyTail(current);
@@ -74,8 +73,11 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         }
         else
         {
-            if (Vector2.Distance(current, PrototypeEntrance) < EntranceRadius && motor != null && !motor.enabled)
+            if (Vector2.Distance(current, MvpMissionRuntime.StartPosition) < EntranceRadius &&
+                motor != null && !motor.enabled)
+            {
                 completedAtEntrance = true;
+            }
 
             if (completedAtEntrance && motor != null && motor.enabled)
                 ResetPath();
@@ -113,8 +115,6 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         if (line == null)
             return;
 
-        // Keep this deliberately simple. A cave guideline should read as a thin cord,
-        // not as a textured ribbon or a glowing game trail.
         line.widthMultiplier = 1f;
         line.startWidth = CordWidth;
         line.endWidth = CordWidth;
@@ -145,7 +145,7 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
     {
         if (points.Count == 0)
         {
-            points.Add(new Vector3(PrototypeEntrance.x, PrototypeEntrance.y, 0f));
+            points.Add(new Vector3(MvpMissionRuntime.StartPosition.x, MvpMissionRuntime.StartPosition.y, 0f));
             return;
         }
 
@@ -229,8 +229,6 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         float length = Vector3.Distance(a, b);
         int subdivisions = Mathf.Clamp(Mathf.CeilToInt(length / 1.0f), 2, 12);
 
-        // Only a tiny amount of slack. In water the guideline is not perfectly rigid,
-        // but it also should not hang like a heavy rope.
         float sag = Mathf.Min(liveEnd ? 0.012f : 0.035f,
             length * (liveEnd ? 0.0025f : 0.006f));
 
@@ -256,7 +254,7 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         frozen = false;
         completedAtEntrance = false;
         points.Clear();
-        points.Add(new Vector3(PrototypeEntrance.x, PrototypeEntrance.y, 0f));
+        points.Add(new Vector3(MvpMissionRuntime.StartPosition.x, MvpMissionRuntime.StartPosition.y, 0f));
 
         Vector3 current = diver.position;
         current.z = 0f;
