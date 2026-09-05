@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 // MVP map built from the user's single cave reference image. The source image is
 // reduced to a rock/water mask: opaque pixels are rock, transparent pixels are water.
@@ -18,6 +19,8 @@ public sealed class MvpMapRuntime : MonoBehaviour
 
     private static Texture2D mapMask;
     private static GameObject mapRoot;
+    private static Sprite shadowRectSprite;
+    private static Material shadowRectMaterial;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
@@ -75,7 +78,7 @@ public sealed class MvpMapRuntime : MonoBehaviour
 
         mapRoot = new GameObject("MVP Cave Map");
         BuildRockVisual(mapRoot.transform);
-        BuildCollisionGrid(mapRoot.transform);
+        BuildCollisionAndShadowGrid(mapRoot.transform);
         BuildOuterBoundary(mapRoot.transform);
     }
 
@@ -120,9 +123,9 @@ public sealed class MvpMapRuntime : MonoBehaviour
             renderer.material = new Material(litShader) { name = "MVP Cave Rock Lit" };
     }
 
-    private static void BuildCollisionGrid(Transform parent)
+    private static void BuildCollisionAndShadowGrid(Transform parent)
     {
-        GameObject collisionRoot = new GameObject("Rock Collision");
+        GameObject collisionRoot = new GameObject("Rock Collision And Shadows");
         collisionRoot.transform.SetParent(parent, false);
 
         float worldHeight = WorldHeight;
@@ -147,7 +150,7 @@ public sealed class MvpMapRuntime : MonoBehaviour
                     continue;
 
                 int runEnd = col - 1;
-                AddRunCollider(collisionRoot, row, runStart, runEnd, cellWidth, cellHeight, worldHeight);
+                AddRunColliderAndShadow(collisionRoot.transform, row, runStart, runEnd, cellWidth, cellHeight, worldHeight);
                 runStart = -1;
             }
         }
@@ -195,8 +198,8 @@ public sealed class MvpMapRuntime : MonoBehaviour
         return rockSamples >= 2;
     }
 
-    private static void AddRunCollider(
-        GameObject root,
+    private static void AddRunColliderAndShadow(
+        Transform root,
         int row,
         int startCol,
         int endCol,
@@ -207,10 +210,53 @@ public sealed class MvpMapRuntime : MonoBehaviour
         int count = endCol - startCol + 1;
         float centerX = -WorldWidth * 0.5f + (startCol + count * 0.5f) * cellWidth;
         float centerY = -worldHeight * 0.5f + (row + 0.5f) * cellHeight;
+        Vector2 size = new Vector2(count * cellWidth + 0.01f, cellHeight + 0.01f);
 
-        BoxCollider2D collider = root.AddComponent<BoxCollider2D>();
-        collider.offset = new Vector2(centerX, centerY);
-        collider.size = new Vector2(count * cellWidth + 0.01f, cellHeight + 0.01f);
+        GameObject segment = new GameObject($"Rock Shadow {row}_{startCol}_{endCol}");
+        segment.transform.SetParent(root, false);
+        segment.transform.localPosition = new Vector3(centerX, centerY, 0f);
+        segment.transform.localScale = new Vector3(size.x, size.y, 1f);
+
+        // Physics uses the same slightly-eroded rock footprint that defines traversable space.
+        BoxCollider2D collider = segment.AddComponent<BoxCollider2D>();
+        collider.size = Vector2.one;
+
+        // ShadowCaster2D can use a renderer silhouette directly. The renderer is kept
+        // effectively invisible and behind the water/rock artwork; it exists only so the
+        // light has a rectangular occluder matching this collision segment.
+        SpriteRenderer silhouette = segment.AddComponent<SpriteRenderer>();
+        silhouette.sprite = GetShadowRectSprite();
+        silhouette.color = new Color(1f, 1f, 1f, 0.001f);
+        silhouette.sortingOrder = -100;
+        if (shadowRectMaterial != null)
+            silhouette.sharedMaterial = shadowRectMaterial;
+
+        ShadowCaster2D caster = segment.AddComponent<ShadowCaster2D>();
+        caster.useRendererSilhouette = true;
+        caster.selfShadows = false;
+        caster.castsShadows = true;
+    }
+
+    private static Sprite GetShadowRectSprite()
+    {
+        if (shadowRectSprite != null)
+            return shadowRectSprite;
+
+        Texture2D texture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+        texture.name = "RuntimeShadowRectPixel";
+        texture.SetPixel(0, 0, Color.white);
+        texture.Apply(false, true);
+
+        shadowRectSprite = Sprite.Create(texture, new Rect(0f, 0f, 1f, 1f), new Vector2(0.5f, 0.5f), 1f);
+        shadowRectSprite.name = "RuntimeShadowRectSprite";
+
+        Shader shader = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+        if (shader == null)
+            shader = Shader.Find("Sprites/Default");
+        if (shader != null)
+            shadowRectMaterial = new Material(shader) { name = "Runtime Shadow Silhouette Material" };
+
+        return shadowRectSprite;
     }
 
     private static void BuildOuterBoundary(Transform parent)
