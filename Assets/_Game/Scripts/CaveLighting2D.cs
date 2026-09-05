@@ -99,9 +99,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
 
     private void ConfigureDiverSilhouette(GameObject diverObject)
     {
-        // Keep the diver readable without lighting the surrounding cave.
-        // The lamp sits near the head/front. Parts close to that point remain visible,
-        // while the body, tank and fins progressively fall toward a dark silhouette.
         Shader unlitShader = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
         if (unlitShader == null)
             unlitShader = Shader.Find("Sprites/Default");
@@ -122,8 +119,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
             Vector2 local = renderer.transform.localPosition;
             float distance = Vector2.Distance(local, LampLocalPosition);
             float nearFactor = 1f - Mathf.Clamp01(Mathf.InverseLerp(0.08f, 1.45f, distance));
-
-            // Front/head: clearly readable. Mid-body: subdued. Rear/fins: silhouette only.
             float brightness = Mathf.Lerp(0.18f, 0.66f, nearFactor);
             Color baseColor = renderer.color;
             renderer.color = new Color(
@@ -175,10 +170,11 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         flashlight.pointLightOuterAngle = 58f;
         flashlight.falloffIntensity = 0.55f;
         flashlight.overlapOperation = Light2D.OverlapOperation.Additive;
+        flashlight.shadowsEnabled = true;
+        flashlight.shadowIntensity = 1f;
+        flashlight.shadowVolumeIntensity = 1f;
         beamObject.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
 
-        // Tiny source glow marks where the lamp physically starts, but remains too weak
-        // and too short-ranged to reveal nearby cave geometry.
         GameObject sourceGlowObject = new GameObject("Flashlight Source Glow 2D");
         sourceGlowObject.transform.SetParent(diver, false);
         sourceGlowObject.transform.localPosition = new Vector3(LampLocalPosition.x, LampLocalPosition.y, -0.18f);
@@ -193,5 +189,8 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         sourceGlow.pointLightOuterAngle = 360f;
         sourceGlow.falloffIntensity = 0.98f;
         sourceGlow.overlapOperation = Light2D.OverlapOperation.Additive;
+        sourceGlow.shadowsEnabled = true;
+        sourceGlow.shadowIntensity = 1f;
+        sourceGlow.shadowVolumeIntensity = 1f;
     }
 }
