@@ -2,11 +2,11 @@ using System.Collections.Generic;
 using UnityEngine;
 
 // MVP silt rule:
-// 1) touching rock creates a disturbance and briefly shows a yellow '!'
-// 2) the disturbance is initially invisible
-// 3) suspended sediment develops over tens of seconds
-// 4) returning through that same area later produces a strong silt-out
-// 5) the guideline keeps its colour only where the diver's light actually reaches it
+// 1) touching rock briefly shows a yellow '!'
+// 2) that contact creates a world-space sediment disturbance
+// 3) it is almost invisible at first and matures over tens of seconds
+// 4) the sediment itself is lit by the diver's flashlight, so only illuminated water looks murky
+// 5) the guideline is never redrawn as an x-ray; it is visible only through normal scene lighting
 [DefaultExecutionOrder(-500)]
 public sealed class CaveDiveHazardsRuntime : MonoBehaviour
 {
@@ -15,6 +15,7 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
         public Vector2 Position;
         public float BornAt;
         public float Strength;
+        public SiltCloudVisual Visual;
     }
 
     private readonly List<SiltDisturbance> disturbances = new List<SiltDisturbance>();
@@ -22,19 +23,13 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
     private GameObject diver;
     private DiverMotor2D motor;
     private Collider2D diverCollider;
-    private LineRenderer guidelineRenderer;
     private DiverSiltContactSensor contactSensor;
 
     private float findRetryTimer;
     private float contactCooldown;
-    private float exposure;
     private float warningUntil;
     private Vector2 warningWorldPosition;
     private Vector3 previousDiverPosition;
-
-    private const float FlashlightRange = 9.0f;
-    private const float FlashlightHalfAngle = 29f;
-    private const float FlashlightSourceOffset = 0.55f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
@@ -53,15 +48,13 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
 
         contactCooldown -= Time.deltaTime;
         RemoveExpiredDisturbances();
-        exposure = CalculateExposure();
 
         Vector3 current = diver.transform.position;
         if (Vector3.Distance(current, previousDiverPosition) > 3f &&
             Vector2.Distance(current, MvpMissionRuntime.StartPosition) < 1.4f &&
             motor != null && motor.enabled)
         {
-            disturbances.Clear();
-            exposure = 0f;
+            ClearDisturbances();
         }
         previousDiverPosition = current;
     }
@@ -82,10 +75,6 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
 
         motor = diver.GetComponent<DiverMotor2D>();
         diverCollider = diver.GetComponent<Collider2D>();
-
-        GameObject guidelineObject = GameObject.Find("Guideline");
-        if (guidelineObject != null)
-            guidelineRenderer = guidelineObject.GetComponent<LineRenderer>();
 
         contactSensor = diver.GetComponent<DiverSiltContactSensor>();
         if (contactSensor == null)
@@ -111,16 +100,21 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
         SiltDisturbance nearby = FindNearbyDisturbance(contactPoint, 0.85f);
         if (nearby != null)
         {
-            nearby.Strength = Mathf.Min(1.55f, nearby.Strength + Mathf.Lerp(0.08f, 0.20f, contactSeverity));
+            float boost = Mathf.Lerp(0.08f, 0.20f, contactSeverity);
+            nearby.Strength = Mathf.Min(1.55f, nearby.Strength + boost);
             nearby.Position = Vector2.Lerp(nearby.Position, contactPoint, 0.18f);
+            if (nearby.Visual != null)
+                nearby.Visual.Boost(boost);
             return;
         }
 
+        float strength = Mathf.Lerp(0.58f, 0.90f, contactSeverity);
         disturbances.Add(new SiltDisturbance
         {
             Position = contactPoint,
             BornAt = Time.time,
-            Strength = Mathf.Lerp(0.58f, 0.90f, contactSeverity)
+            Strength = strength,
+            Visual = SiltCloudVisual.Create(contactPoint, strength)
         });
     }
 
@@ -139,208 +133,28 @@ public sealed class CaveDiveHazardsRuntime : MonoBehaviour
     {
         for (int i = disturbances.Count - 1; i >= 0; i--)
         {
-            if (Time.time - disturbances[i].BornAt > 180f)
-                disturbances.RemoveAt(i);
+            if (Time.time - disturbances[i].BornAt <= 180f)
+                continue;
+
+            if (disturbances[i].Visual != null)
+                Destroy(disturbances[i].Visual.gameObject);
+            disturbances.RemoveAt(i);
         }
     }
 
-    private float CalculateExposure()
+    private void ClearDisturbances()
     {
-        if (diver == null)
-            return 0f;
-
-        Vector2 diverPosition = diver.transform.position;
-        float total = 0f;
-
         for (int i = 0; i < disturbances.Count; i++)
         {
-            SiltDisturbance disturbance = disturbances[i];
-            float age = Time.time - disturbance.BornAt;
-            float maturity = SiltMaturity(age);
-            if (maturity <= 0f)
-                continue;
-
-            float radius = Mathf.Lerp(0.65f, 3.75f, maturity);
-            float distance = Vector2.Distance(diverPosition, disturbance.Position);
-            if (distance >= radius)
-                continue;
-
-            float spatial = 1f - distance / radius;
-            spatial = spatial * spatial * (3f - 2f * spatial);
-
-            float lateFade = age <= 140f ? 1f : Mathf.Clamp01((180f - age) / 40f);
-            total += spatial * maturity * disturbance.Strength * lateFade;
+            if (disturbances[i].Visual != null)
+                Destroy(disturbances[i].Visual.gameObject);
         }
-
-        return Mathf.Clamp(total, 0f, 1.15f);
-    }
-
-    private static float SiltMaturity(float age)
-    {
-        if (age < 5f)
-            return 0f;
-        if (age < 15f)
-            return Mathf.Lerp(0f, 0.18f, Mathf.InverseLerp(5f, 15f, age));
-        if (age < 30f)
-            return Mathf.Lerp(0.18f, 0.58f, Mathf.InverseLerp(15f, 30f, age));
-        if (age < 55f)
-            return Mathf.Lerp(0.58f, 1f, Mathf.InverseLerp(30f, 55f, age));
-        return 1f;
+        disturbances.Clear();
     }
 
     private void OnGUI()
     {
-        DrawSiltHaze();
         DrawContactWarning();
-    }
-
-    private void DrawSiltHaze()
-    {
-        if (exposure <= 0.015f)
-            return;
-
-        GUI.depth = 12;
-
-        Color previousColor = GUI.color;
-        Matrix4x4 previousMatrix = GUI.matrix;
-        float normalized = Mathf.Clamp01(exposure);
-
-        float veilAlpha = Mathf.Lerp(0.02f, 0.62f, Mathf.SmoothStep(0f, 1f, normalized));
-        GUI.color = new Color(0.48f, 0.49f, 0.42f, veilAlpha);
-        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
-
-        int speckCount = Mathf.RoundToInt(Mathf.Lerp(4f, 105f, normalized));
-        float t = Time.time;
-        GUI.color = new Color(0.74f, 0.72f, 0.61f, Mathf.Lerp(0.025f, 0.28f, normalized));
-
-        for (int i = 0; i < speckCount; i++)
-        {
-            float seedA = Mathf.Abs(Mathf.Sin(i * 12.9898f + 0.37f) * 43758.5453f);
-            float seedB = Mathf.Abs(Mathf.Sin(i * 78.233f + 1.70f) * 19341.731f);
-            float x = Mathf.Repeat(seedA + t * (3f + i % 5), Screen.width);
-            float y = Mathf.Repeat(seedB - t * (1.2f + i % 3), Screen.height);
-            float size = 1.1f + (i % 5) * 0.65f;
-            GUI.DrawTexture(new Rect(x, y, size, size), Texture2D.whiteTexture);
-        }
-
-        DrawGuidelineThroughSilt(normalized);
-
-        GUI.matrix = previousMatrix;
-        GUI.color = previousColor;
-    }
-
-    private void DrawGuidelineThroughSilt(float normalized)
-    {
-        if (guidelineRenderer == null || Camera.main == null || diver == null || normalized < 0.12f)
-            return;
-
-        int count = guidelineRenderer.positionCount;
-        if (count < 2)
-            return;
-
-        Vector3[] positions = new Vector3[count];
-        guidelineRenderer.GetPositions(positions);
-
-        Color oldColor = GUI.color;
-        float alpha = Mathf.Lerp(0.22f, 0.84f, normalized);
-        GUI.color = new Color(0.76f, 0.66f, 0.28f, alpha);
-
-        // The silt readability pass is not an x-ray. Sample every line span and redraw
-        // only the pieces that lie inside the current flashlight cone and are not hidden
-        // behind solid cave geometry. Turning away from the guideline makes it disappear.
-        for (int i = 0; i < count - 1; i++)
-        {
-            Vector3 aWorld = positions[i];
-            Vector3 bWorld = positions[i + 1];
-            float length = Vector3.Distance(aWorld, bWorld);
-            int subdivisions = Mathf.Clamp(Mathf.CeilToInt(length / 0.35f), 2, 24);
-
-            Vector3 previous = aWorld;
-            bool previousVisible = IsInsideFlashlight(previous);
-
-            for (int s = 1; s <= subdivisions; s++)
-            {
-                float u = s / (float)subdivisions;
-                Vector3 current = Vector3.Lerp(aWorld, bWorld, u);
-                bool currentVisible = IsInsideFlashlight(current);
-
-                if (previousVisible && currentVisible)
-                    DrawWorldGuiLine(previous, current, 1.55f);
-
-                previous = current;
-                previousVisible = currentVisible;
-            }
-        }
-
-        GUI.color = oldColor;
-    }
-
-    private bool IsInsideFlashlight(Vector2 worldPoint)
-    {
-        if (diver == null)
-            return false;
-
-        Vector2 forward = diver.transform.right.normalized;
-        Vector2 source = (Vector2)diver.transform.position + forward * FlashlightSourceOffset;
-        Vector2 toPoint = worldPoint - source;
-        float distance = toPoint.magnitude;
-
-        // The tiny source glow around the lamp itself is also real illumination.
-        if (distance <= 0.75f)
-            return HasLightLineOfSight(source, worldPoint);
-
-        if (distance > FlashlightRange || distance < 0.001f)
-            return false;
-
-        float angle = Vector2.Angle(forward, toPoint / distance);
-        if (angle > FlashlightHalfAngle)
-            return false;
-
-        return HasLightLineOfSight(source, worldPoint);
-    }
-
-    private bool HasLightLineOfSight(Vector2 source, Vector2 target)
-    {
-        RaycastHit2D[] hits = Physics2D.LinecastAll(source, target);
-        for (int i = 0; i < hits.Length; i++)
-        {
-            Collider2D hit = hits[i].collider;
-            if (hit == null || hit == diverCollider || hit.isTrigger || !hit.enabled)
-                continue;
-
-            return false;
-        }
-
-        return true;
-    }
-
-    private static void DrawWorldGuiLine(Vector3 aWorld, Vector3 bWorld, float thickness)
-    {
-        if (Camera.main == null)
-            return;
-
-        Vector3 aScreen3 = Camera.main.WorldToScreenPoint(aWorld);
-        Vector3 bScreen3 = Camera.main.WorldToScreenPoint(bWorld);
-        if (aScreen3.z <= 0f || bScreen3.z <= 0f)
-            return;
-
-        Vector2 a = new Vector2(aScreen3.x, Screen.height - aScreen3.y);
-        Vector2 b = new Vector2(bScreen3.x, Screen.height - bScreen3.y);
-        DrawGuiLine(a, b, thickness);
-    }
-
-    private static void DrawGuiLine(Vector2 a, Vector2 b, float thickness)
-    {
-        Vector2 delta = b - a;
-        float length = delta.magnitude;
-        if (length < 0.5f)
-            return;
-
-        float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
-        Matrix4x4 oldMatrix = GUI.matrix;
-        GUIUtility.RotateAroundPivot(angle, a);
-        GUI.DrawTexture(new Rect(a.x, a.y - thickness * 0.5f, length, thickness), Texture2D.whiteTexture);
-        GUI.matrix = oldMatrix;
     }
 
     private void DrawContactWarning()
@@ -401,6 +215,7 @@ internal sealed class DiverSiltContactSensor : MonoBehaviour
     }
 }
 
+// Kept only because the lighting bootstrap checks for the old prototype visibility component.
 public sealed class CaveVisibilityRuntime : MonoBehaviour
 {
 }
