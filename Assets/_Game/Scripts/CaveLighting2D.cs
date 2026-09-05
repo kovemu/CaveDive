@@ -13,8 +13,10 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
     private Material diverUnlitMaterial;
     private float findRetryTimer;
     private float baseFlashlightIntensity = 1.35f;
+    private float currentFlashlightRange = 9.0f;
     private bool configured;
 
+    private const float BaseFlashlightRange = 9.0f;
     private static readonly Vector2 LampLocalPosition = new Vector2(0.55f, 0f);
 
     public static Vector2 CurrentAimDirection { get; private set; } = Vector2.right;
@@ -58,6 +60,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
             return;
 
         AimFlashlightAtMouse();
+        ApplySiltAttenuation();
     }
 
     private void TryConfigure()
@@ -179,7 +182,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         flashlight.color = new Color(0.70f, 0.90f, 0.94f, 1f);
         flashlight.intensity = baseFlashlightIntensity;
         flashlight.pointLightInnerRadius = 0.35f;
-        flashlight.pointLightOuterRadius = 9.0f;
+        flashlight.pointLightOuterRadius = BaseFlashlightRange;
         flashlight.pointLightInnerAngle = 28f;
         flashlight.pointLightOuterAngle = 58f;
         flashlight.falloffIntensity = 0.55f;
@@ -188,8 +191,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         flashlight.shadowIntensity = 1f;
         flashlight.shadowVolumeIntensity = 1f;
 
-        // Light2D's cone points along local +Y. Start by aiming in the diver's facing direction;
-        // after that the mouse controls the light independently from keyboard movement.
         SetFlashlightDirection(diver.right);
 
         GameObject sourceGlowObject = new GameObject("Flashlight Source Glow 2D");
@@ -227,6 +228,57 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
             return;
 
         SetFlashlightDirection(aim.normalized);
+    }
+
+    private void ApplySiltAttenuation()
+    {
+        if (flashlight == null)
+            return;
+
+        Vector2 source = CurrentLampWorldPosition;
+        Vector2 direction = CurrentAimDirection.normalized;
+
+        const float step = 0.18f;
+        float transmission = 1f;
+        float targetRange = BaseFlashlightRange;
+
+        // Ray-march down the centre of the beam. Mature suspended sediment rapidly absorbs
+        // the lamp, so geometry behind the cloud no longer remains visible.
+        for (float distance = 0.45f; distance <= BaseFlashlightRange; distance += step)
+        {
+            Vector2 samplePoint = source + direction * distance;
+            float density = SiltCloudVisual.GetOpticalDensityAtPoint(samplePoint);
+            if (density <= 0.01f)
+                continue;
+
+            transmission *= Mathf.Exp(-density * 1.18f * step);
+
+            // Very dense sediment behaves like a short wall of visibility. Do not let the cone
+            // continue cleanly through it even if some light technically transmits.
+            if (density >= 0.95f)
+            {
+                targetRange = Mathf.Min(targetRange, distance + 0.35f);
+                break;
+            }
+
+            if (transmission <= 0.26f)
+            {
+                targetRange = Mathf.Min(targetRange, distance + 0.25f);
+                break;
+            }
+        }
+
+        currentFlashlightRange = Mathf.MoveTowards(
+            currentFlashlightRange,
+            targetRange,
+            Time.deltaTime * (targetRange < currentFlashlightRange ? 18f : 8f));
+
+        flashlight.pointLightOuterRadius = Mathf.Clamp(currentFlashlightRange, 0.9f, BaseFlashlightRange);
+        flashlight.pointLightInnerRadius = Mathf.Min(0.35f, flashlight.pointLightOuterRadius * 0.35f);
+
+        // The beam also loses punch in heavy sediment instead of remaining a crisp cone.
+        float rangeLoss = 1f - Mathf.InverseLerp(0.9f, BaseFlashlightRange, flashlight.pointLightOuterRadius);
+        baseFlashlightIntensity = Mathf.Lerp(1.35f, 0.92f, rangeLoss);
     }
 
     private void SetFlashlightDirection(Vector2 direction)
