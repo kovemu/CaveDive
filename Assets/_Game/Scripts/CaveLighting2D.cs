@@ -1,10 +1,12 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.Rendering.Universal;
 
 [DefaultExecutionOrder(-400)]
 public sealed class CaveLighting2DRuntime : MonoBehaviour
 {
     private Transform diver;
+    private Transform flashlightTransform;
     private Light2D flashlight;
     private Light2D sourceGlow;
     private Material litMaterial;
@@ -14,6 +16,9 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
     private bool configured;
 
     private static readonly Vector2 LampLocalPosition = new Vector2(0.55f, 0f);
+
+    public static Vector2 CurrentAimDirection { get; private set; } = Vector2.right;
+    public static Vector2 CurrentLampWorldPosition { get; private set; }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
@@ -45,6 +50,14 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
                 + Mathf.Sin(Time.time * 2.9f) * 0.012f;
             flashlight.intensity = baseFlashlightIntensity * flicker;
         }
+    }
+
+    private void LateUpdate()
+    {
+        if (!configured || diver == null || flashlightTransform == null)
+            return;
+
+        AimFlashlightAtMouse();
     }
 
     private void TryConfigure()
@@ -159,6 +172,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         GameObject beamObject = new GameObject("Diver Flashlight 2D");
         beamObject.transform.SetParent(diver, false);
         beamObject.transform.localPosition = new Vector3(LampLocalPosition.x, LampLocalPosition.y, -0.2f);
+        flashlightTransform = beamObject.transform;
 
         flashlight = beamObject.AddComponent<Light2D>();
         flashlight.lightType = Light2D.LightType.Point;
@@ -173,7 +187,10 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         flashlight.shadowsEnabled = true;
         flashlight.shadowIntensity = 1f;
         flashlight.shadowVolumeIntensity = 1f;
-        beamObject.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
+
+        // Light2D's cone points along local +Y. Start by aiming in the diver's facing direction;
+        // after that the mouse controls the light independently from keyboard movement.
+        SetFlashlightDirection(diver.right);
 
         GameObject sourceGlowObject = new GameObject("Flashlight Source Glow 2D");
         sourceGlowObject.transform.SetParent(diver, false);
@@ -192,5 +209,36 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         sourceGlow.shadowsEnabled = true;
         sourceGlow.shadowIntensity = 1f;
         sourceGlow.shadowVolumeIntensity = 1f;
+    }
+
+    private void AimFlashlightAtMouse()
+    {
+        Camera camera = Camera.main;
+        Mouse mouse = Mouse.current;
+        if (camera == null || mouse == null)
+            return;
+
+        Vector2 screenPosition = mouse.position.ReadValue();
+        Vector3 mouseWorld3 = camera.ScreenToWorldPoint(new Vector3(screenPosition.x, screenPosition.y, 0f));
+        Vector2 lampWorldPosition = flashlightTransform.position;
+        Vector2 aim = (Vector2)mouseWorld3 - lampWorldPosition;
+
+        if (aim.sqrMagnitude < 0.0001f)
+            return;
+
+        SetFlashlightDirection(aim.normalized);
+    }
+
+    private void SetFlashlightDirection(Vector2 direction)
+    {
+        if (flashlightTransform == null || direction.sqrMagnitude < 0.0001f)
+            return;
+
+        direction.Normalize();
+        float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f;
+        flashlightTransform.rotation = Quaternion.Euler(0f, 0f, angle);
+
+        CurrentAimDirection = direction;
+        CurrentLampWorldPosition = flashlightTransform.position;
     }
 }
