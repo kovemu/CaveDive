@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// World-space silt. It does not tint the whole screen; it exists only around the
-// wall-contact point and becomes visible when the diver's 2D light reaches it.
+// World-space silt. It exists around wall-contact points and is revealed by the diver's light.
+// Mature silt is deliberately dense enough to hide cave silhouettes and attenuate the flashlight.
 public sealed class SiltCloudVisual : MonoBehaviour
 {
     private sealed class Blob
@@ -18,12 +18,15 @@ public sealed class SiltCloudVisual : MonoBehaviour
     private static Sprite softSprite;
     private static Sprite speckSprite;
     private static Material litMaterial;
+    private static readonly List<SiltCloudVisual> activeClouds = new List<SiltCloudVisual>();
 
     private readonly List<Blob> blobs = new List<Blob>();
 
     private float bornAt;
     private float strength = 0.7f;
     private Vector2 origin;
+    private float currentMaturity;
+    private float currentFade = 1f;
 
     public static SiltCloudVisual Create(Vector2 position, float initialStrength)
     {
@@ -38,34 +41,81 @@ public sealed class SiltCloudVisual : MonoBehaviour
         return visual;
     }
 
+    private void OnEnable()
+    {
+        if (!activeClouds.Contains(this))
+            activeClouds.Add(this);
+    }
+
+    private void OnDisable()
+    {
+        activeClouds.Remove(this);
+    }
+
     public void Boost(float amount)
     {
         strength = Mathf.Clamp(strength + amount, 0.25f, 1.6f);
+    }
+
+    // Used by the flashlight to estimate how much suspended sediment lies along the beam.
+    public static float GetOpticalDensityAtPoint(Vector2 worldPoint)
+    {
+        float density = 0f;
+
+        for (int i = activeClouds.Count - 1; i >= 0; i--)
+        {
+            SiltCloudVisual cloud = activeClouds[i];
+            if (cloud == null)
+            {
+                activeClouds.RemoveAt(i);
+                continue;
+            }
+
+            density += cloud.SampleOpticalDensity(worldPoint);
+        }
+
+        return Mathf.Clamp(density, 0f, 2.5f);
+    }
+
+    private float SampleOpticalDensity(Vector2 worldPoint)
+    {
+        if (currentMaturity <= 0.01f || currentFade <= 0.01f)
+            return 0f;
+
+        float radius = Mathf.Lerp(0.65f, 4.0f, currentMaturity);
+        float distance = Vector2.Distance(worldPoint, transform.position);
+        if (distance >= radius)
+            return 0f;
+
+        float radial = 1f - distance / radius;
+        radial = radial * radial * (3f - 2f * radial);
+
+        // A mature, repeatedly disturbed cloud should behave like a wall of dirty water.
+        return radial * currentMaturity * currentFade * strength * 1.35f;
     }
 
     private void Build()
     {
         EnsureSharedResources();
 
-        // Broad suspended sediment masses. These are intentionally soft and dim;
-        // the flashlight reveals them instead of them glowing by themselves.
-        for (int i = 0; i < 9; i++)
+        // Dense overlapping haze masses. They stay dark and low-contrast so that, once mature,
+        // rock edges inside them are very difficult to distinguish.
+        for (int i = 0; i < 14; i++)
         {
             float angle = i * 2.399963f;
-            float radius = 0.18f + (i % 4) * 0.16f;
+            float radius = 0.14f + (i % 5) * 0.14f;
             Vector2 offset = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
-            float scale = 0.85f + (i % 5) * 0.18f;
+            float scale = 0.88f + (i % 6) * 0.17f;
             CreateBlob("Haze", softSprite, offset, scale, i * 0.73f, false, 2);
         }
 
-        // Small particles catch the lamp and make the water read as dirty rather than
-        // like a flat translucent fog layer.
-        for (int i = 0; i < 22; i++)
+        // More particles than before so the beam reads as travelling through suspended sediment.
+        for (int i = 0; i < 36; i++)
         {
             float angle = i * 1.618034f * Mathf.PI;
-            float radius = 0.20f + (i % 7) * 0.085f;
+            float radius = 0.18f + (i % 9) * 0.075f;
             Vector2 offset = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
-            float scale = 0.045f + (i % 4) * 0.018f;
+            float scale = 0.040f + (i % 5) * 0.017f;
             CreateBlob("Particle", speckSprite, offset, scale, i * 1.17f, true, 3);
         }
     }
@@ -82,8 +132,8 @@ public sealed class SiltCloudVisual : MonoBehaviour
         renderer.sharedMaterial = litMaterial;
         renderer.sortingOrder = sortingOrder;
         renderer.color = speck
-            ? new Color(0.74f, 0.72f, 0.61f, 0f)
-            : new Color(0.45f, 0.46f, 0.39f, 0f);
+            ? new Color(0.64f, 0.62f, 0.53f, 0f)
+            : new Color(0.29f, 0.30f, 0.27f, 0f);
 
         blobs.Add(new Blob
         {
@@ -99,21 +149,19 @@ public sealed class SiltCloudVisual : MonoBehaviour
     private void Update()
     {
         float age = Time.time - bornAt;
-        float maturity = Maturity(age);
-        float fade = age <= 140f ? 1f : Mathf.Clamp01((180f - age) / 40f);
-        float amount = maturity * fade * strength;
+        currentMaturity = Maturity(age);
+        currentFade = age <= 140f ? 1f : Mathf.Clamp01((180f - age) / 40f);
+        float amount = currentMaturity * currentFade * strength;
 
-        // The cloud grows slowly after the contact. At first it is essentially invisible,
-        // so the consequence is mainly encountered on the return trip.
-        float spread = Mathf.Lerp(0.8f, 3.2f, maturity);
-        transform.position = new Vector3(origin.x, origin.y + maturity * 0.10f, -0.05f);
+        float spread = Mathf.Lerp(0.8f, 3.55f, currentMaturity);
+        transform.position = new Vector3(origin.x, origin.y + currentMaturity * 0.10f, -0.05f);
 
         for (int i = 0; i < blobs.Count; i++)
         {
             Blob blob = blobs[i];
             float t = Time.time;
-            float driftX = Mathf.Sin(t * (0.11f + (i % 3) * 0.025f) + blob.Phase) * 0.10f * maturity;
-            float driftY = Mathf.Cos(t * (0.08f + (i % 4) * 0.017f) + blob.Phase * 0.7f) * 0.07f * maturity;
+            float driftX = Mathf.Sin(t * (0.11f + (i % 3) * 0.025f) + blob.Phase) * 0.12f * currentMaturity;
+            float driftY = Mathf.Cos(t * (0.08f + (i % 4) * 0.017f) + blob.Phase * 0.7f) * 0.08f * currentMaturity;
 
             Vector2 local = blob.BaseOffset * spread + new Vector2(driftX, driftY);
             blob.Transform.localPosition = new Vector3(local.x, local.y, 0f);
@@ -121,17 +169,17 @@ public sealed class SiltCloudVisual : MonoBehaviour
             if (blob.Speck)
             {
                 float pulse = 0.78f + Mathf.Sin(t * 1.4f + blob.Phase) * 0.22f;
-                blob.Transform.localScale = Vector3.one * blob.BaseScale * Mathf.Lerp(0.7f, 1.35f, maturity);
+                blob.Transform.localScale = Vector3.one * blob.BaseScale * Mathf.Lerp(0.7f, 1.45f, currentMaturity);
                 Color c = blob.Renderer.color;
-                c.a = Mathf.Clamp01(amount * 0.42f * pulse);
+                c.a = Mathf.Clamp01(amount * 0.62f * pulse);
                 blob.Renderer.color = c;
             }
             else
             {
                 float breathing = 0.95f + Mathf.Sin(t * 0.23f + blob.Phase) * 0.05f;
-                blob.Transform.localScale = Vector3.one * blob.BaseScale * Mathf.Lerp(0.85f, 2.15f, maturity) * breathing;
+                blob.Transform.localScale = Vector3.one * blob.BaseScale * Mathf.Lerp(0.88f, 2.45f, currentMaturity) * breathing;
                 Color c = blob.Renderer.color;
-                c.a = Mathf.Clamp01(amount * 0.18f);
+                c.a = Mathf.Clamp01(amount * 0.43f);
                 blob.Renderer.color = c;
             }
         }
@@ -183,7 +231,7 @@ public sealed class SiltCloudVisual : MonoBehaviour
                 float d = Mathf.Sqrt(dx * dx + dy * dy);
                 float alpha = compact
                     ? 1f - Mathf.SmoothStep(0.20f, 1f, d)
-                    : 1f - Mathf.SmoothStep(0.05f, 1f, d);
+                    : 1f - Mathf.SmoothStep(0.02f, 0.92f, d);
                 pixels[y * size + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(alpha));
             }
         }
