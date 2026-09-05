@@ -8,9 +8,12 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
     private Light2D flashlight;
     private Light2D sourceGlow;
     private Material litMaterial;
+    private Material diverUnlitMaterial;
     private float findRetryTimer;
     private float baseFlashlightIntensity = 1.35f;
     private bool configured;
+
+    private static readonly Vector2 LampLocalPosition = new Vector2(0.55f, 0f);
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
@@ -57,6 +60,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
             oldVisibility.enabled = false;
 
         ConfigureWorldFor2DLighting();
+        ConfigureDiverSilhouette(diverObject);
         BuildFlashlight();
         configured = true;
     }
@@ -71,8 +75,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         if (litShader != null)
             litMaterial = new Material(litShader) { name = "Runtime Cave Sprite Lit" };
 
-        // Everything, including the diver, now reacts to the same physical lights.
-        // This avoids the previous bright, flat unlit character while keeping the cave dark.
         GameObject prototypeRoot = GameObject.Find("CaveDivePrototype");
         if (prototypeRoot != null && litMaterial != null)
         {
@@ -83,7 +85,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
 
         BuildWaterPlane();
 
-        // MVP rule: there is no readable cave silhouette outside the diver's lights.
         Light2D[] sceneLights = Object.FindObjectsByType<Light2D>(FindObjectsSortMode.None);
         for (int i = 0; i < sceneLights.Length; i++)
         {
@@ -93,6 +94,43 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
                 light.intensity = 0f;
                 light.color = Color.black;
             }
+        }
+    }
+
+    private void ConfigureDiverSilhouette(GameObject diverObject)
+    {
+        // Keep the diver readable without lighting the surrounding cave.
+        // The lamp sits near the head/front. Parts close to that point remain visible,
+        // while the body, tank and fins progressively fall toward a dark silhouette.
+        Shader unlitShader = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+        if (unlitShader == null)
+            unlitShader = Shader.Find("Sprites/Default");
+        if (unlitShader == null)
+            return;
+
+        diverUnlitMaterial = new Material(unlitShader)
+        {
+            name = "Runtime Diver Silhouette Unlit"
+        };
+
+        SpriteRenderer[] renderers = diverObject.GetComponentsInChildren<SpriteRenderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            SpriteRenderer renderer = renderers[i];
+            renderer.sharedMaterial = diverUnlitMaterial;
+
+            Vector2 local = renderer.transform.localPosition;
+            float distance = Vector2.Distance(local, LampLocalPosition);
+            float nearFactor = 1f - Mathf.Clamp01(Mathf.InverseLerp(0.08f, 1.45f, distance));
+
+            // Front/head: clearly readable. Mid-body: subdued. Rear/fins: silhouette only.
+            float brightness = Mathf.Lerp(0.18f, 0.66f, nearFactor);
+            Color baseColor = renderer.color;
+            renderer.color = new Color(
+                baseColor.r * brightness,
+                baseColor.g * brightness,
+                baseColor.b * brightness,
+                0.97f);
         }
     }
 
@@ -125,7 +163,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
     {
         GameObject beamObject = new GameObject("Diver Flashlight 2D");
         beamObject.transform.SetParent(diver, false);
-        beamObject.transform.localPosition = new Vector3(0.55f, 0f, -0.2f);
+        beamObject.transform.localPosition = new Vector3(LampLocalPosition.x, LampLocalPosition.y, -0.2f);
 
         flashlight = beamObject.AddComponent<Light2D>();
         flashlight.lightType = Light2D.LightType.Point;
@@ -137,27 +175,23 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         flashlight.pointLightOuterAngle = 58f;
         flashlight.falloffIntensity = 0.55f;
         flashlight.overlapOperation = Light2D.OverlapOperation.Additive;
-
-        // Light2D's wedge is centred on local +Y; the diver faces local +X.
         beamObject.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
 
-        // A very small 360-degree glow originates from the exact lamp position.
-        // The head/front of the diver remains readable, while the body and fins fall away
-        // toward a dark silhouette as they get farther from the lamp. This glow is deliberately
-        // weak and short-ranged so it cannot reveal the cave layout around the player.
+        // Tiny source glow marks where the lamp physically starts, but remains too weak
+        // and too short-ranged to reveal nearby cave geometry.
         GameObject sourceGlowObject = new GameObject("Flashlight Source Glow 2D");
         sourceGlowObject.transform.SetParent(diver, false);
-        sourceGlowObject.transform.localPosition = new Vector3(0.55f, 0f, -0.18f);
+        sourceGlowObject.transform.localPosition = new Vector3(LampLocalPosition.x, LampLocalPosition.y, -0.18f);
 
         sourceGlow = sourceGlowObject.AddComponent<Light2D>();
         sourceGlow.lightType = Light2D.LightType.Point;
         sourceGlow.color = new Color(0.58f, 0.76f, 0.80f, 1f);
-        sourceGlow.intensity = 0.24f;
-        sourceGlow.pointLightInnerRadius = 0.04f;
-        sourceGlow.pointLightOuterRadius = 1.35f;
+        sourceGlow.intensity = 0.09f;
+        sourceGlow.pointLightInnerRadius = 0.03f;
+        sourceGlow.pointLightOuterRadius = 0.48f;
         sourceGlow.pointLightInnerAngle = 360f;
         sourceGlow.pointLightOuterAngle = 360f;
-        sourceGlow.falloffIntensity = 0.92f;
+        sourceGlow.falloffIntensity = 0.98f;
         sourceGlow.overlapOperation = Light2D.OverlapOperation.Additive;
     }
 }
