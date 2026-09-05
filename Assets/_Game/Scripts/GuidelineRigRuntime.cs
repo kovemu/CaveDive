@@ -9,12 +9,14 @@ using UnityEngine;
 public sealed class GuidelineRigRuntime : MonoBehaviour
 {
     private readonly List<Vector3> points = new List<Vector3>();
+    private readonly List<Vector3> visualPoints = new List<Vector3>();
 
     private Transform diver;
     private DiverMotor2D motor;
     private Collider2D diverCollider;
     private GuidelineTrail prototypeTrail;
     private LineRenderer line;
+    private Material cordMaterial;
 
     private bool frozen;
     private bool completedAtEntrance;
@@ -23,6 +25,7 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
     private const float SampleSpacing = 0.38f;
     private const float TargetRadius = 1.35f;
     private const float EntranceRadius = 1.0f;
+    private const float CordWidth = 0.027f;
 
     private static readonly Vector2 PrototypeTarget = new Vector2(20f, -1.8f);
     private static readonly Vector2 PrototypeEntrance = new Vector2(-11.5f, 0f);
@@ -39,7 +42,6 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
 
     private IEnumerator Start()
     {
-        // Prototype objects are also generated after scene load.
         yield return null;
         yield return null;
         FindReferences();
@@ -54,7 +56,6 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         Vector3 current = diver.position;
         current.z = 0f;
 
-        // R-restart teleports the diver back to the entrance. Treat that as a fresh reel.
         if (Vector3.Distance(current, previousDiverPosition) > 3f &&
             Vector2.Distance(current, PrototypeEntrance) < EntranceRadius)
         {
@@ -101,19 +102,86 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         line = guidelineObject.GetComponent<LineRenderer>();
         prototypeTrail = guidelineObject.GetComponent<GuidelineTrail>();
 
-        // Stop the old every-step breadcrumb system from fighting this renderer.
         if (prototypeTrail != null)
             prototypeTrail.enabled = false;
 
-        if (line != null)
+        ConfigureCordRenderer();
+        return diver != null && line != null;
+    }
+
+    private void ConfigureCordRenderer()
+    {
+        if (line == null)
+            return;
+
+        line.startWidth = CordWidth;
+        line.endWidth = CordWidth * 0.92f;
+        line.numCornerVertices = 2;
+        line.numCapVertices = 2;
+        line.textureMode = LineTextureMode.Tile;
+        line.sortingOrder = 3;
+
+        // Cave guideline is usually cord, not a glowing cable. Keep it desaturated,
+        // slightly dirty, and let the diver's lamp do most of the work.
+        Color cord = new Color(0.69f, 0.63f, 0.39f, 0.92f);
+        line.startColor = cord;
+        line.endColor = new Color(0.61f, 0.56f, 0.35f, 0.90f);
+
+        AnimationCurve width = new AnimationCurve();
+        width.AddKey(0f, 0.92f);
+        width.AddKey(0.22f, 1.04f);
+        width.AddKey(0.50f, 0.96f);
+        width.AddKey(0.78f, 1.02f);
+        width.AddKey(1f, 0.90f);
+        line.widthCurve = width;
+        line.widthMultiplier = CordWidth;
+        line.startWidth = 1f;
+        line.endWidth = 1f;
+
+        if (cordMaterial == null)
+            cordMaterial = BuildCordMaterial();
+        if (cordMaterial != null)
+            line.material = cordMaterial;
+    }
+
+    private static Material BuildCordMaterial()
+    {
+        Shader shader = Shader.Find("Universal Render Pipeline/2D/Sprite-Lit-Default");
+        if (shader == null)
+            shader = Shader.Find("Sprites/Default");
+        if (shader == null)
+            return null;
+
+        Texture2D texture = new Texture2D(32, 4, TextureFormat.RGBA32, false)
         {
-            line.startWidth = 0.04f;
-            line.endWidth = 0.04f;
-            line.numCornerVertices = 3;
-            line.numCapVertices = 3;
+            name = "RuntimeGuidelineCordTexture",
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Repeat
+        };
+
+        Color[] pixels = new Color[32 * 4];
+        for (int y = 0; y < 4; y++)
+        {
+            for (int x = 0; x < 32; x++)
+            {
+                // Tiny alternating strands and stains break up the perfectly solid laser look.
+                float strand = ((x / 3) % 2 == 0) ? 1.00f : 0.78f;
+                float grime = 0.90f + Mathf.Sin(x * 1.73f + y * 0.91f) * 0.07f;
+                float edge = (y == 0 || y == 3) ? 0.72f : 1f;
+                float v = strand * grime * edge;
+                pixels[y * 32 + x] = new Color(0.78f * v, 0.72f * v, 0.45f * v, 1f);
+            }
         }
 
-        return diver != null && line != null;
+        texture.SetPixels(pixels);
+        texture.Apply(false, true);
+
+        Material material = new Material(shader)
+        {
+            name = "RuntimeGuidelineCordMaterial",
+            mainTexture = texture
+        };
+        return material;
     }
 
     private void PayOutLine(Vector3 current)
@@ -134,9 +202,6 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
 
     private void SimplifyTail(Vector3 current)
     {
-        // Repeatedly remove the middle point when the line can run directly from
-        // the previous support point to the diver without cutting through rock.
-        // This leaves supports naturally at bends rather than tracing every swim wobble.
         bool changed = true;
         int safety = 0;
 
@@ -162,9 +227,6 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
             Collider2D hit = hits[i].collider;
             if (hit == null || hit == diverCollider || hit.isTrigger || !hit.enabled)
                 continue;
-
-            // The generated organic cave colliders and any future solid wall collider
-            // count as rock. Legacy disabled colliders are ignored above.
             return true;
         }
 
@@ -182,22 +244,58 @@ public sealed class GuidelineRigRuntime : MonoBehaviour
         if (line == null || points.Count == 0)
             return;
 
-        if (frozen)
+        visualPoints.Clear();
+
+        for (int i = 0; i < points.Count - 1; i++)
+            AppendCordSpan(points[i], points[i + 1], false, i);
+
+        if (!frozen)
         {
-            line.positionCount = points.Count;
-            line.SetPositions(points.ToArray());
-            return;
+            Vector3 last = points[points.Count - 1];
+            if (Vector3.Distance(last, current) > 0.02f)
+                AppendCordSpan(last, current, true, points.Count - 1);
+            else if (visualPoints.Count == 0)
+                visualPoints.Add(last);
+        }
+        else if (visualPoints.Count == 0)
+        {
+            visualPoints.Add(points[0]);
         }
 
-        bool needsLiveEnd = Vector3.Distance(points[points.Count - 1], current) > 0.02f;
-        int count = points.Count + (needsLiveEnd ? 1 : 0);
-        line.positionCount = count;
+        line.positionCount = visualPoints.Count;
+        if (visualPoints.Count > 0)
+            line.SetPositions(visualPoints.ToArray());
+    }
 
-        for (int i = 0; i < points.Count; i++)
-            line.SetPosition(i, points[i]);
+    private void AppendCordSpan(Vector3 a, Vector3 b, bool liveEnd, int spanIndex)
+    {
+        float length = Vector3.Distance(a, b);
+        int subdivisions = Mathf.Clamp(Mathf.CeilToInt(length / 0.7f), 2, 14);
 
-        if (needsLiveEnd)
-            line.SetPosition(count - 1, current);
+        // A taut guideline still has a small amount of weight/slack in water. The live section
+        // held by the diver is tighter than older spans already laid through the cave.
+        float sag = Mathf.Min(liveEnd ? 0.025f : 0.065f, length * (liveEnd ? 0.006f : 0.012f));
+
+        Vector2 direction = ((Vector2)(b - a)).normalized;
+        Vector2 normal = new Vector2(-direction.y, direction.x);
+
+        for (int s = 0; s <= subdivisions; s++)
+        {
+            if (visualPoints.Count > 0 && s == 0)
+                continue;
+
+            float t = s / (float)subdivisions;
+            Vector3 p = Vector3.Lerp(a, b, t);
+
+            float arc = 4f * t * (1f - t);
+            p.y -= sag * arc;
+
+            // Very small irregularity suggests braided cord without making the line visibly wavy.
+            float fiberWobble = Mathf.Sin((spanIndex * 2.37f + t * 7.1f) * Mathf.PI) * 0.006f * arc;
+            p += (Vector3)(normal * fiberWobble);
+            p.z = 0f;
+            visualPoints.Add(p);
+        }
     }
 
     private void ResetPath()
