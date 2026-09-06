@@ -160,7 +160,7 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
 
         GameObject water = new GameObject("RuntimeWaterPlane");
         water.transform.position = new Vector3(0f, 0f, 0.5f);
-        water.transform.localScale = new Vector3(32f, 32f, 1f);
+        water.transform.localScale = new Vector3(64f, 64f, 1f);
 
         SpriteRenderer renderer = water.AddComponent<SpriteRenderer>();
         renderer.sprite = sprite;
@@ -242,8 +242,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         float transmission = 1f;
         float targetRange = BaseFlashlightRange;
 
-        // Ray-march down the centre of the beam. Mature suspended sediment rapidly absorbs
-        // the lamp, so geometry behind the cloud no longer remains visible.
         for (float distance = 0.45f; distance <= BaseFlashlightRange; distance += step)
         {
             Vector2 samplePoint = source + direction * distance;
@@ -253,8 +251,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
 
             transmission *= Mathf.Exp(-density * 1.18f * step);
 
-            // Very dense sediment behaves like a short wall of visibility. Do not let the cone
-            // continue cleanly through it even if some light technically transmits.
             if (density >= 0.95f)
             {
                 targetRange = Mathf.Min(targetRange, distance + 0.35f);
@@ -276,7 +272,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         flashlight.pointLightOuterRadius = Mathf.Clamp(currentFlashlightRange, 0.9f, BaseFlashlightRange);
         flashlight.pointLightInnerRadius = Mathf.Min(0.35f, flashlight.pointLightOuterRadius * 0.35f);
 
-        // The beam also loses punch in heavy sediment instead of remaining a crisp cone.
         float rangeLoss = 1f - Mathf.InverseLerp(0.9f, BaseFlashlightRange, flashlight.pointLightOuterRadius);
         baseFlashlightIntensity = Mathf.Lerp(1.35f, 0.92f, rangeLoss);
     }
