@@ -1,12 +1,13 @@
 using System.Collections;
 using UnityEngine;
 
-// MVP framing: keep the diver and nearby cave geometry large enough on screen
-// that narrow passages feel immediate rather than like a distant map overview.
+// MVP framing: zoom the camera a little closer so cave walls and passages occupy
+// more of the screen. The diver visual itself is scaled down separately, which
+// reduces the diver-to-cave ratio while keeping the cave feeling large and immediate.
 [DefaultExecutionOrder(900)]
 public sealed class MvpCameraScaleRuntime : MonoBehaviour
 {
-    private const float MvpOrthographicSize = 4.3f;
+    private const float MvpOrthographicSize = 3.8f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
