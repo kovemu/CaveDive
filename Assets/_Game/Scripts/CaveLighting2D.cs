@@ -264,6 +264,10 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
             }
         }
 
+        // Restore 25% of the range that silt would otherwise remove.
+        // The cloud still blocks visibility, but the cutoff is less punishing.
+        targetRange = Mathf.Lerp(targetRange, BaseFlashlightRange, 0.25f);
+
         currentFlashlightRange = Mathf.MoveTowards(
             currentFlashlightRange,
             targetRange,
