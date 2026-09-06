@@ -8,13 +8,14 @@ using UnityEngine.Rendering.Universal;
 [DefaultExecutionOrder(-250)]
 public sealed class MvpMapRuntime : MonoBehaviour
 {
-    public const float WorldWidth = 24f;
-    public const int CollisionColumns = 96;
-    public const int CollisionRows = 96;
+    // Doubled from the earlier 24-unit prototype. The diver keeps the same size,
+    // so the cave now reads as a much larger physical space around the player.
+    public const float WorldWidth = 48f;
+    public const int CollisionColumns = 192;
+    public const int CollisionRows = 192;
 
-    // Collision is intentionally a little more forgiving than the visual silhouette.
-    // One grid cell is roughly 0.25 world units, so eroding one cell opens a narrow
-    // passage by about 0.5 units total without visibly changing the map art.
+    // Keep approximately the same 0.25-world-unit collision sampling density as before.
+    // Eroding one cell therefore preserves the same small gameplay clearance at the wall.
     private const int CollisionErosionCells = 1;
 
     private static Texture2D mapMask;
@@ -34,7 +35,6 @@ public sealed class MvpMapRuntime : MonoBehaviour
 
     private IEnumerator Start()
     {
-        // Let the old prototype/organic map instantiate first, then retire it.
         yield return null;
         yield return null;
 
@@ -92,8 +92,6 @@ public sealed class MvpMapRuntime : MonoBehaviour
         if (capsule == null)
             return;
 
-        // The visible fins/tank should not make every tight cave opening impossible.
-        // Keep the hitbox around the diver's actual torso rather than the full silhouette.
         capsule.size = new Vector2(0.92f, 0.34f);
         capsule.offset = Vector2.zero;
     }
@@ -161,9 +159,6 @@ public sealed class MvpMapRuntime : MonoBehaviour
         if (!RawCellIsRock(col, row))
             return false;
 
-        // Erode the collision boundary inward by one grid cell. Any rock cell that is
-        // adjacent to navigable water is omitted from collision, widening cramped necks
-        // while leaving the rendered cave image exactly as the user drew it.
         for (int dy = -CollisionErosionCells; dy <= CollisionErosionCells; dy++)
         {
             for (int dx = -CollisionErosionCells; dx <= CollisionErosionCells; dx++)
@@ -181,7 +176,6 @@ public sealed class MvpMapRuntime : MonoBehaviour
 
     private static bool RawCellIsRock(int col, int row)
     {
-        // Outside the sampled map stays solid; the explicit outer boundary handles escape too.
         if (col < 0 || row < 0 || col >= CollisionColumns || row >= CollisionRows)
             return true;
 
@@ -217,13 +211,9 @@ public sealed class MvpMapRuntime : MonoBehaviour
         segment.transform.localPosition = new Vector3(centerX, centerY, 0f);
         segment.transform.localScale = new Vector3(size.x, size.y, 1f);
 
-        // Physics uses the same slightly-eroded rock footprint that defines traversable space.
         BoxCollider2D collider = segment.AddComponent<BoxCollider2D>();
         collider.size = Vector2.one;
 
-        // ShadowCaster2D can use a renderer silhouette directly. The renderer is kept
-        // effectively invisible and behind the water/rock artwork; it exists only so the
-        // light has a rectangular occluder matching this collision segment.
         SpriteRenderer silhouette = segment.AddComponent<SpriteRenderer>();
         silhouette.sprite = GetShadowRectSprite();
         silhouette.color = new Color(1f, 1f, 1f, 0.001f);
@@ -287,7 +277,6 @@ public sealed class MvpMapRuntime : MonoBehaviour
             if (mapMask != null && mapMask.width > 0)
                 return WorldWidth * mapMask.height / mapMask.width;
 
-            // Source mask is 512 x 510.
             return WorldWidth * 510f / 512f;
         }
     }
