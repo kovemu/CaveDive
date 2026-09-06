@@ -187,10 +187,12 @@ public sealed class SiltCloudVisual : MonoBehaviour
 
     private static float Maturity(float age)
     {
-        if (age < 5f) return 0f;
-        if (age < 15f) return Mathf.Lerp(0f, 0.18f, Mathf.InverseLerp(5f, 15f, age));
-        if (age < 30f) return Mathf.Lerp(0.18f, 0.58f, Mathf.InverseLerp(15f, 30f, age));
-        if (age < 55f) return Mathf.Lerp(0.58f, 1f, Mathf.InverseLerp(30f, 55f, age));
+        // Slightly faster than the original 5/15/30/55 second ramp.
+        // The cloud still has a delayed build-up, but becomes tactically relevant sooner.
+        if (age < 4f) return 0f;
+        if (age < 12f) return Mathf.Lerp(0f, 0.18f, Mathf.InverseLerp(4f, 12f, age));
+        if (age < 24f) return Mathf.Lerp(0.18f, 0.58f, Mathf.InverseLerp(12f, 24f, age));
+        if (age < 44f) return Mathf.Lerp(0.58f, 1f, Mathf.InverseLerp(24f, 44f, age));
         return 1f;
     }
 
