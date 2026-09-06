@@ -6,9 +6,10 @@ using UnityEngine;
 [DefaultExecutionOrder(50)]
 public sealed class MvpMissionRuntime : MonoBehaviour
 {
-    public static readonly Vector2 StartPosition = new Vector2(-9.58f, 8.60f);
-    public static readonly Vector2 Target1Position = new Vector2(10.97f, -2.89f);
-    public static readonly Vector2 Target2Position = new Vector2(7.76f, -10.08f);
+    // Map world size was doubled, so preserve the same normalized locations in the cave.
+    public static readonly Vector2 StartPosition = new Vector2(-19.16f, 17.20f);
+    public static readonly Vector2 Target1Position = new Vector2(21.94f, -5.78f);
+    public static readonly Vector2 Target2Position = new Vector2(15.52f, -20.16f);
 
     public static bool TargetReached { get; private set; }
     public static int ReachedTargetId { get; private set; }
@@ -32,7 +33,6 @@ public sealed class MvpMissionRuntime : MonoBehaviour
 
     private IEnumerator Start()
     {
-        // Prototype objects and the MVP map are runtime-created, so allow them to settle.
         yield return null;
         yield return null;
         yield return null;
@@ -86,8 +86,6 @@ public sealed class MvpMissionRuntime : MonoBehaviour
 
         bool enabledNow = motor.enabled;
 
-        // R restart re-enables the motor and teleports the diver to S through the
-        // prototype game manager. Reset the alternative-target mission state here.
         if (!wasMotorEnabled && enabledNow && Vector2.Distance(diver.transform.position, StartPosition) < 1.2f)
         {
             TargetReached = false;
