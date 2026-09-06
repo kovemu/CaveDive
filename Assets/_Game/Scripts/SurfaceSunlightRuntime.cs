@@ -2,17 +2,16 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.Rendering.Universal;
 
-// Replaces the old single entrance cone with a bank of downward sunlight beams.
-// Any part of the cave that is open to the top can receive sunlight; the existing
-// rock ShadowCaster2D geometry blocks it wherever a ceiling/overhang is present.
+// A single distant sunlight source above the cave.
+// Because it is placed far above the map, its rays are nearly parallel across the cave.
+// Existing rock ShadowCaster2D geometry blocks the light, so only areas with a clear
+// line toward the open surface receive daylight.
 [DefaultExecutionOrder(-150)]
 public sealed class SurfaceSunlightRuntime : MonoBehaviour
 {
-    private const int BeamCount = 19;
-    private const float BeamIntensity = 0.22f;
-    private const float BeamInnerAngle = 20f;
-    private const float BeamOuterAngle = 34f;
-    private const float BeamFalloff = 0.82f;
+    private const float SunHeightAboveMap = 80f;
+    private const float SunIntensity = 0.82f;
+    private const float SunFalloff = 0.78f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Install()
@@ -26,66 +25,63 @@ public sealed class SurfaceSunlightRuntime : MonoBehaviour
 
     private IEnumerator Start()
     {
-        // Let CaveLighting2DRuntime create its legacy entrance sunlight first,
-        // and let MvpMapRuntime finish building the cave shadow casters.
+        // Wait until the MVP cave has built its collision/shadow caster geometry.
         yield return null;
         yield return null;
         yield return null;
 
-        ReplaceSurfaceSunlight();
+        BuildDistantSunlight();
     }
 
-    private static void ReplaceSurfaceSunlight()
+    private static void BuildDistantSunlight()
     {
-        GameObject oldSunlight = GameObject.Find("Surface Sunlight 2D");
-        if (oldSunlight != null)
-        {
-            oldSunlight.SetActive(false);
-            Object.Destroy(oldSunlight);
-        }
+        // Retire both previous sunlight experiments if they exist during domain reload/play.
+        GameObject oldSingle = GameObject.Find("Surface Sunlight 2D");
+        if (oldSingle != null)
+            Object.Destroy(oldSingle);
 
-        if (GameObject.Find("Surface Sunlight Bank") != null)
+        GameObject oldBank = GameObject.Find("Surface Sunlight Bank");
+        if (oldBank != null)
+            Object.Destroy(oldBank);
+
+        if (GameObject.Find("Distant Surface Sunlight 2D") != null)
             return;
 
         float worldWidth = MvpMapRuntime.WorldWidth;
         float worldHeight = MvpMapRuntime.WorldHeight;
-        float surfaceY = worldHeight * 0.5f + 0.75f;
 
-        // Sunlight is deliberately limited to the upper part of the cave. Deeper water
-        // remains dark even when a shaft is geometrically open all the way upward.
-        float sunlightReach = Mathf.Min(worldHeight * 0.42f, 20f);
+        // Put one source far above the center of the map. At this distance the cone sides
+        // are almost parallel, which reads much more like sunlight than repeated spotlights.
+        float sunX = 0f;
+        float sunY = worldHeight * 0.5f + SunHeightAboveMap;
 
-        GameObject root = new GameObject("Surface Sunlight Bank");
+        // Cover the entire top edge with a small margin. Rock ceilings decide which shafts
+        // actually receive light; we do not pre-select openings by position.
+        float halfLitWidth = worldWidth * 0.58f;
+        float halfAngle = Mathf.Atan2(halfLitWidth, SunHeightAboveMap) * Mathf.Rad2Deg;
+        float outerAngle = Mathf.Clamp(halfAngle * 2f + 4f, 28f, 52f);
+        float innerAngle = Mathf.Max(outerAngle - 8f, 20f);
 
-        float left = -worldWidth * 0.5f;
-        float step = worldWidth / (BeamCount - 1);
+        // Reach slightly beyond the bottom of the map so a truly open vertical shaft can
+        // receive weak daylight at depth. Normal falloff keeps deep areas much darker.
+        float outerRadius = SunHeightAboveMap + worldHeight + 8f;
 
-        for (int i = 0; i < BeamCount; i++)
-        {
-            float x = left + step * i;
+        GameObject sunlightObject = new GameObject("Distant Surface Sunlight 2D");
+        sunlightObject.transform.position = new Vector3(sunX, sunY, -0.25f);
+        sunlightObject.transform.rotation = Quaternion.Euler(0f, 0f, 180f);
 
-            GameObject beamObject = new GameObject($"Sun Beam {i + 1:00}");
-            beamObject.transform.SetParent(root.transform, false);
-            beamObject.transform.position = new Vector3(x, surfaceY, -0.25f);
-
-            // Light2D point cones aim along local +Y. 180 degrees points them straight down,
-            // approximating parallel sunlight while keeping each beam narrow enough that rock
-            // ceilings block the light rather than letting it bend far around corners.
-            beamObject.transform.rotation = Quaternion.Euler(0f, 0f, 180f);
-
-            Light2D sunlight = beamObject.AddComponent<Light2D>();
-            sunlight.lightType = Light2D.LightType.Point;
-            sunlight.color = new Color(0.68f, 0.86f, 0.94f, 1f);
-            sunlight.intensity = BeamIntensity;
-            sunlight.pointLightInnerRadius = 0.35f;
-            sunlight.pointLightOuterRadius = sunlightReach;
-            sunlight.pointLightInnerAngle = BeamInnerAngle;
-            sunlight.pointLightOuterAngle = BeamOuterAngle;
-            sunlight.falloffIntensity = BeamFalloff;
-            sunlight.overlapOperation = Light2D.OverlapOperation.Additive;
-            sunlight.shadowsEnabled = true;
-            sunlight.shadowIntensity = 1f;
-            sunlight.shadowVolumeIntensity = 1f;
-        }
+        Light2D sunlight = sunlightObject.AddComponent<Light2D>();
+        sunlight.lightType = Light2D.LightType.Point;
+        sunlight.color = new Color(0.66f, 0.84f, 0.94f, 1f);
+        sunlight.intensity = SunIntensity;
+        sunlight.pointLightInnerRadius = SunHeightAboveMap * 0.72f;
+        sunlight.pointLightOuterRadius = outerRadius;
+        sunlight.pointLightInnerAngle = innerAngle;
+        sunlight.pointLightOuterAngle = outerAngle;
+        sunlight.falloffIntensity = SunFalloff;
+        sunlight.overlapOperation = Light2D.OverlapOperation.Additive;
+        sunlight.shadowsEnabled = true;
+        sunlight.shadowIntensity = 1f;
+        sunlight.shadowVolumeIntensity = 1f;
     }
 }
