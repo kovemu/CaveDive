@@ -112,7 +112,8 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
             }
         }
 
-        BuildSurfaceSunlight();
+        // Surface sunlight is built separately by SurfaceSunlightRuntime so the cave uses
+        // one distant source instead of repeated spotlight-like cones.
     }
 
     private void ConfigureDiverSilhouette(GameObject diverObject)
@@ -170,42 +171,6 @@ public sealed class CaveLighting2DRuntime : MonoBehaviour
         renderer.sortingOrder = -50;
         if (litMaterial != null)
             renderer.sharedMaterial = litMaterial;
-    }
-
-    private void BuildSurfaceSunlight()
-    {
-        if (GameObject.Find("Surface Sunlight 2D") != null)
-            return;
-
-        // Treat the upper opening near S as the water surface. A broad blue-white beam
-        // enters from just above the map and naturally fades with depth. The same rock
-        // ShadowCaster2D geometry used by the flashlight blocks this light, so areas behind
-        // cave walls remain dark instead of receiving global ambient illumination.
-        float surfaceY = MvpMapRuntime.WorldHeight * 0.5f + 0.8f;
-        float surfaceX = MvpMissionRuntime.StartPosition.x - 0.4f;
-        float sunlightReach = MvpMapRuntime.WorldWidth * 0.34f;
-
-        GameObject sunlightObject = new GameObject("Surface Sunlight 2D");
-        sunlightObject.transform.position = new Vector3(surfaceX, surfaceY, -0.25f);
-
-        Light2D sunlight = sunlightObject.AddComponent<Light2D>();
-        sunlight.lightType = Light2D.LightType.Point;
-        sunlight.color = new Color(0.68f, 0.86f, 0.94f, 1f);
-        sunlight.intensity = 0.72f;
-        sunlight.pointLightInnerRadius = 1.2f;
-        sunlight.pointLightOuterRadius = sunlightReach;
-        sunlight.pointLightInnerAngle = 72f;
-        sunlight.pointLightOuterAngle = 150f;
-        sunlight.falloffIntensity = 0.68f;
-        sunlight.overlapOperation = Light2D.OverlapOperation.Additive;
-        sunlight.shadowsEnabled = true;
-        sunlight.shadowIntensity = 1f;
-        sunlight.shadowVolumeIntensity = 1f;
-
-        // Sunlight enters mostly downward with a slight inward angle toward the cave.
-        Vector2 direction = new Vector2(0.18f, -1f).normalized;
-        float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f;
-        sunlightObject.transform.rotation = Quaternion.Euler(0f, 0f, angle);
     }
 
     private void BuildFlashlight()
